@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { IconSend } from "@/components/icons";
+import { askQuestion, fetchMessages } from "@/lib/api";
 import { useDocuments } from "@/lib/documents-provider";
-import { CANNED, detectTopic, SAMPLE_QA } from "@/lib/sample-data";
 import type { ChatMessage } from "@/lib/types";
 
 function formatMessageHtml(content: string) {
@@ -12,47 +12,53 @@ function formatMessageHtml(content: string) {
 
 export default function QnaPage() {
   const { docs } = useDocuments();
-  const [messages, setMessages] = useState<ChatMessage[]>(SAMPLE_QA);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<string>("all");
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const send = () => {
+  useEffect(() => {
+    let active = true;
+    fetchMessages()
+      .then((items) => {
+        if (active) setMessages(items);
+      })
+      .catch((err: unknown) => {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : "Gagal memuat percakapan.");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const send = async () => {
     if (!input.trim() || loading) return;
     setError(null);
-    const userMsg: ChatMessage = { role: "user", content: input, timestamp: new Date() };
+    const question = input.trim();
+    const userMsg: ChatMessage = { role: "user", content: question, timestamp: new Date() };
     setMessages((prev) => [...prev, userMsg]);
-    const q = input;
     setInput("");
     setLoading(true);
-    window.setTimeout(() => {
-      try {
-        const topic = detectTopic(q);
-        const resp = CANNED[topic];
-        const aiMsg: ChatMessage = {
-          role: "assistant",
-          content: resp.answer,
-          sources: resp.sources,
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, aiMsg]);
-        window.setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
-      } catch (err) {
-        console.error("Gagal menghasilkan jawaban", err);
-        setError("Gagal menghasilkan jawaban. Coba lagi.");
-      } finally {
-        setLoading(false);
-      }
-    }, 1400);
+    try {
+      const assistant = await askQuestion(question, selectedDoc);
+      setMessages((prev) => [...prev, assistant]);
+      window.setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    } catch (err) {
+      console.error("Gagal menghasilkan jawaban", err);
+      setError(err instanceof Error ? err.message : "Gagal menghasilkan jawaban. Coba lagi.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const suggestions = [
-    "Apa isi laporan keuangan Q3?",
-    "Prosedur pengadaan barang?",
-    "Kebijakan cuti karyawan?",
-    "Cara menggunakan sistem ERP?",
+    "Prosedur apa saja yang ada di TSD ini?",
+    "Jelaskan USP_INSERT_DETAIL_CAT2",
+    "Segment LLL-LLL_Exposure_Data_STG untuk apa?",
+    "Apa alur data di sp_LLL_MONITORING_STG?",
   ];
 
   return (
@@ -67,7 +73,7 @@ export default function QnaPage() {
 
         <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }} className="flex flex-col gap-5">
           {messages.map((msg, i) => (
-            <div key={`${msg.timestamp.getTime()}-${i}`} style={{ display: "flex", gap: 12, flexDirection: msg.role === "user" ? "row-reverse" : "row" }}>
+            <div key={`${msg.id ?? "local"}-${msg.timestamp.getTime()}-${i}`} style={{ display: "flex", gap: 12, flexDirection: msg.role === "user" ? "row-reverse" : "row" }}>
               <div
                 style={{
                   width: 32,
@@ -200,7 +206,7 @@ export default function QnaPage() {
           <div ref={bottomRef} />
         </div>
 
-        {messages.length < 4 && (
+        {messages.length === 0 && !loading && (
           <div style={{ padding: "0 32px 12px" }} className="flex gap-2 flex-wrap">
             {suggestions.map((s) => (
               <button

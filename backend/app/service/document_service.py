@@ -1,0 +1,271 @@
+from pathlib import Path
+
+from sqlalchemy import exists, or_
+from sqlalchemy.orm import joinedload, selectinload
+from werkzeug.utils import secure_filename
+
+from app import db
+from app.config.config import Config
+from app.models.activity_model import Activity
+from app.models.document_model import Document
+from app.models.module_model import Module
+from app.models.procedure_model import Procedure
+from app.service.extract_service import extract_tsd_from_file, tags_from_filename
+
+
+def parse_id(value):
+    if value in (None, "", "all"):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def list_documents(
+    module_id=None,
+    procedure=None,
+    title=None,
+    document_code=None,
+    version=None,
+    q=None,
+):
+    query = Document.query.options(
+        joinedload(Document.module),
+        selectinload(Document.linked_procedures),
+    )
+    parsed_module = parse_id(module_id)
+    if parsed_module is not None:
+        query = query.filter(Document.module_id == parsed_module)
+    if title:
+        query = query.filter(Document.title.ilike(f"%{title.strip()}%"))
+    if document_code:
+        query = query.filter(Document.document_code.ilike(f"%{document_code.strip()}%"))
+    if version:
+        query = query.filter(Document.version.ilike(f"%{version.strip()}%"))
+    if procedure:
+        term = f"%{procedure.strip()}%"
+        query = query.filter(
+            Document.linked_procedures.any(Procedure.name.ilike(term))
+        )
+    if q:
+        term = f"%{q.strip()}%"
+        module_match = exists().where(Module.id == Document.module_id, Module.name.ilike(term))
+        query = query.filter(
+            or_(
+                Document.title.ilike(term),
+                Document.document_code.ilike(term),
+                Document.version.ilike(term),
+                Document.file_name.ilike(term),
+                module_match,
+                Document.linked_procedures.any(Procedure.name.ilike(term)),
+            )
+        )
+    return query.distinct().order_by(Document.upload_at.desc()).all()
+
+
+def list_document_filters():
+    versions = [
+        row[0]
+        for row in db.session.query(Document.version)
+        .filter(Document.version.isnot(None), Document.version != "")
+        .distinct()
+        .order_by(Document.version.asc())
+        .all()
+    ]
+    codes = [
+        row[0]
+        for row in db.session.query(Document.document_code)
+        .filter(Document.document_code.isnot(None), Document.document_code != "")
+        .distinct()
+        .order_by(Document.document_code.asc())
+        .all()
+    ]
+    modules = Module.query.order_by(Module.name.asc()).all()
+    procedures = Procedure.query.order_by(Procedure.name.asc()).all()
+    return {
+        "modules": [item.to_dict() for item in modules],
+        "procedures": [{"id": str(item.id), "name": item.name} for item in procedures],
+        "versions": versions,
+        "documentCodes": codes,
+    }
+
+
+def get_document(document_id):
+    parsed = parse_id(document_id)
+    if parsed is None:
+        return None
+    return db.session.get(Document, parsed)
+
+
+def create_activity(event: str, detail: str, color: str = "#60a5fa"):
+    activity = Activity(event=event, detail=detail, color=color)
+    db.session.add(activity)
+    return activity
+
+
+def default_module() -> Module:
+    module = Module.query.filter(Module.name.ilike("Umum")).first()
+    if module:
+        return module
+    module = Module.query.order_by(Module.id.asc()).first()
+    if module:
+        return module
+    module = Module(name="Umum")
+    db.session.add(module)
+    db.session.flush()
+    return module
+
+
+def get_or_create_module(name: str | None) -> Module:
+    cleaned = (name or "").strip()
+    if not cleaned:
+        return default_module()
+    existing = Module.query.filter(Module.name.ilike(cleaned)).first()
+    if existing:
+        return existing
+    module = Module(name=cleaned.upper() if len(cleaned) <= 8 else cleaned)
+    db.session.add(module)
+    db.session.flush()
+    return module
+
+
+def get_or_create_procedure(name: str) -> Procedure:
+    cleaned = (name or "").strip()
+    existing = Procedure.query.filter(Procedure.name.ilike(cleaned)).first()
+    if existing:
+        return existing
+    procedure = Procedure(name=cleaned)
+    db.session.add(procedure)
+    db.session.flush()
+    return procedure
+
+
+def apply_tsd_metadata(document: Document, metadata: dict) -> None:
+    module = get_or_create_module(metadata.get("module_name"))
+    document.module_id = module.id
+    if metadata.get("document_code"):
+        document.document_code = metadata["document_code"]
+    if metadata.get("version"):
+        document.version = metadata["version"]
+    if metadata.get("title"):
+        document.title = metadata["title"]
+    if metadata.get("tags"):
+        document.tags = metadata["tags"]
+
+    linked = []
+    seen = set()
+    for name in metadata.get("procedures") or []:
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        linked.append(get_or_create_procedure(name))
+    document.linked_procedures = linked
+    document.procedure_count = len(linked)
+
+
+def save_upload(file_storage, module_id=None) -> Document:
+    original_name = file_storage.filename or "dokumen"
+    ext = Path(original_name).suffix.lstrip(".").lower()
+    if ext not in Config.ALLOWED_EXTENSIONS:
+        raise ValueError("Tipe file tidak didukung. Gunakan PDF, DOCX, atau TXT.")
+
+    parsed_module_id = parse_id(module_id)
+    module = db.session.get(Module, parsed_module_id) if parsed_module_id else default_module()
+
+    upload_dir = Path(Config.UPLOAD_FOLDER)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = secure_filename(original_name) or f"dokumen.{ext}"
+    temp_name = f"tmp_{safe_name}"
+    temp_path = upload_dir / temp_name
+    file_storage.save(str(temp_path))
+
+    document = Document(
+        title=original_name,
+        description=None,
+        module_id=module.id if module else None,
+        file_name=original_name,
+        file_url=str(temp_path),
+        size=temp_path.stat().st_size,
+        type=ext,
+        status="processing",
+        tags=tags_from_filename(original_name),
+    )
+    db.session.add(document)
+    db.session.flush()
+
+    stored_path = upload_dir / f"{document.id}_{safe_name}"
+    temp_path.replace(stored_path)
+    document.file_url = str(stored_path)
+
+    try:
+        _process_document(document)
+        document.status = "ready"
+        document.error_message = None
+        create_activity("Dokumen diproses", document.title, "#34d399")
+    except Exception as exc:
+        document.status = "error"
+        document.error_message = str(exc)
+        create_activity("Gagal memproses dokumen", document.title, "#ef4444")
+
+    create_activity("Dokumen diupload", document.title, "#fbbf24")
+    db.session.commit()
+    return document
+
+
+def _process_document(document: Document):
+    from app.service.rag_service import ingest_document
+
+    ingest_document(document)
+    metadata = extract_tsd_from_file(document.file_url, document.type, document.file_name or document.title)
+    apply_tsd_metadata(document, metadata)
+
+
+def delete_document(document_id) -> bool:
+    document = get_document(document_id)
+    if not document:
+        return False
+
+    if document.file_url:
+        path = Path(document.file_url)
+        if path.exists():
+            path.unlink()
+
+    title = document.title
+    db.session.delete(document)
+    create_activity("Dokumen dihapus", title, "#ef4444")
+    db.session.commit()
+    return True
+
+
+def dashboard_summary():
+    docs = list_documents()
+    total_docs = len(docs)
+    total_procedures = Procedure.query.count()
+    total_pages = sum(d.pages or 0 for d in docs)
+    total_size = sum(d.size or 0 for d in docs)
+    ready = sum(1 for d in docs if d.status == "ready")
+
+    tag_counts: dict[str, int] = {}
+    for doc in docs:
+        for tag in doc.tags or []:
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    top_tags = [
+        {"tag": tag, "count": count}
+        for tag, count in sorted(tag_counts.items(), key=lambda item: -item[1])[:8]
+    ]
+
+    activities = Activity.query.order_by(Activity.created_at.desc()).limit(8).all()
+
+    return {
+        "totalDocs": total_docs,
+        "totalProcedures": total_procedures,
+        "totalPages": total_pages,
+        "totalSize": total_size,
+        "ready": ready,
+        "topTags": top_tags,
+        "recentActivity": [a.to_dict() for a in activities],
+        "documents": [d.to_dict() for d in docs[:8]],
+    }

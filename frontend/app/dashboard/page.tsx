@@ -1,34 +1,48 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { StatCard } from "@/components/stat-card";
-import { useDocuments } from "@/lib/documents-provider";
-import { formatDate, formatSize } from "@/lib/format";
+import { fetchDashboard } from "@/lib/api";
+import { formatActivityTime, formatDate, formatSize } from "@/lib/format";
+import type { DashboardSummary } from "@/lib/types";
+
+function statusLabel(status: string) {
+  if (status === "ready") return { text: "Siap", bg: "rgba(52,211,153,0.12)", color: "#34d399" };
+  if (status === "error") return { text: "Error", bg: "rgba(239,68,68,0.12)", color: "#ef4444" };
+  return { text: "Proses", bg: "rgba(251,191,36,0.12)", color: "#fbbf24" };
+}
 
 export default function DashboardPage() {
-  const { docs } = useDocuments();
-  const totalDocs = docs.length;
-  const totalProcedures = docs.reduce((s, d) => s + d.procedures, 0);
-  const totalPages = docs.reduce((s, d) => s + d.pages, 0);
-  const totalSize = docs.reduce((s, d) => s + d.size, 0);
-  const ready = docs.filter((d) => d.status === "ready").length;
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const recentActivity = [
-    { time: "10:24", event: "Dokumen diupload", detail: "Laporan_Keuangan_Q3_2025.pdf", color: "#fbbf24" },
-    { time: "09:15", event: "Pertanyaan dijawab", detail: "Prosedur pengadaan barang", color: "#60a5fa" },
-    { time: "08:50", event: "Dokumen diupload", detail: "SOP_Pengadaan_Barang.docx", color: "#fbbf24" },
-    { time: "08:30", event: "Pertanyaan dijawab", detail: "Kebijakan cuti karyawan 2025", color: "#60a5fa" },
-    { time: "Yesterday", event: "Dokumen diproses", detail: "Panduan_Sistem_ERP.pdf", color: "#34d399" },
-  ];
+  useEffect(() => {
+    let active = true;
+    fetchDashboard()
+      .then((data) => {
+        if (active) setSummary(data);
+      })
+      .catch((err: unknown) => {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : "Gagal memuat dashboard.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
-  const topTags: Record<string, number> = {};
-  docs.forEach((d) =>
-    d.tags.forEach((t) => {
-      topTags[t] = (topTags[t] || 0) + 1;
-    }),
-  );
-  const tagList = Object.entries(topTags)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8);
+  const totalDocs = summary?.totalDocs ?? 0;
+  const totalProcedures = summary?.totalProcedures ?? 0;
+  const totalPages = summary?.totalPages ?? 0;
+  const totalSize = summary?.totalSize ?? 0;
+  const ready = summary?.ready ?? 0;
+  const docs = summary?.documents ?? [];
+  const recentActivity = summary?.recentActivity ?? [];
+  const tagList = summary?.topTags ?? [];
 
   return (
     <div style={{ padding: "36px 40px" }}>
@@ -38,6 +52,10 @@ export default function DashboardPage() {
         </h1>
         <p style={{ fontSize: 13.5, color: "#8899bb" }}>Ringkasan repository dokumen dan aktivitas tanya jawab Anda</p>
       </div>
+
+      {error && (
+        <p style={{ fontSize: 13, color: "#ef4444", marginBottom: 16 }}>{error}</p>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 32 }}>
         <StatCard
@@ -58,7 +76,7 @@ export default function DashboardPage() {
         <StatCard
           label="Stored Procedures"
           value={totalProcedures}
-          sub="Dari seluruh dokumen"
+          sub="Prosedur unik dari TSD"
           icon={
             <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 10h16M4 14h8M4 18h8" />
@@ -96,13 +114,15 @@ export default function DashboardPage() {
           <h2 style={{ fontFamily: "DM Serif Display, serif", fontSize: 18, color: "#e8edf5", marginBottom: 16 }}>
             Dokumen Terbaru
           </h2>
-          {docs.length === 0 ? (
+          {loading ? (
+            <p style={{ fontSize: 13, color: "#3a4a66" }}>Memuat dokumen…</p>
+          ) : docs.length === 0 ? (
             <p style={{ fontSize: 13, color: "#3a4a66" }}>Belum ada dokumen</p>
           ) : (
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["Dokumen", "Tipe", "Halaman", "Prosedur", "Diupload", "Status"].map((h) => (
+                  {["Dokumen", "Modul", "Versi", "Prosedur", "Diupload", "Status"].map((h) => (
                     <th
                       key={h}
                       style={{
@@ -121,47 +141,43 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {docs.map((doc) => (
-                  <tr key={doc.id} style={{ borderBottom: "1px solid #0f1520" }}>
-                    <td style={{ padding: "11px 0", fontSize: 13, color: "#e8edf5", fontWeight: 500 }}>
-                      {doc.name.length > 28 ? doc.name.slice(0, 28) + "…" : doc.name}
-                    </td>
-                    <td>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          fontFamily: "JetBrains Mono, monospace",
-                          background: doc.type === "pdf" ? "rgba(239,68,68,0.12)" : "rgba(59,130,246,0.12)",
-                          color: doc.type === "pdf" ? "#ef4444" : "#60a5fa",
-                          padding: "2px 6px",
-                          borderRadius: 4,
-                          fontWeight: 600,
-                        }}
-                      >
-                        {doc.type.toUpperCase()}
-                      </span>
-                    </td>
-                    <td style={{ fontSize: 13, color: "#8899bb", paddingLeft: 4 }}>{doc.pages}</td>
-                    <td style={{ fontSize: 13, color: "#fbbf24", fontFamily: "JetBrains Mono, monospace", paddingLeft: 4 }}>
-                      {doc.procedures}
-                    </td>
-                    <td style={{ fontSize: 12, color: "#3a4a66" }}>{formatDate(doc.uploadedAt)}</td>
-                    <td>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          background: "rgba(52,211,153,0.12)",
-                          color: "#34d399",
-                          padding: "2px 8px",
-                          borderRadius: 20,
-                          fontFamily: "JetBrains Mono, monospace",
-                        }}
-                      >
-                        Siap
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {docs.map((doc) => {
+                  const badge = statusLabel(doc.status);
+                  return (
+                    <tr key={doc.id} style={{ borderBottom: "1px solid #0f1520" }}>
+                      <td style={{ padding: "11px 0", fontSize: 13, color: "#e8edf5", fontWeight: 500 }}>
+                        <div>{doc.name.length > 36 ? doc.name.slice(0, 36) + "…" : doc.name}</div>
+                        {doc.documentCode && (
+                          <div style={{ fontSize: 11, color: "#3a4a66", fontFamily: "JetBrains Mono, monospace" }}>
+                            {doc.documentCode}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ fontSize: 12, color: "#fbbf24", fontFamily: "JetBrains Mono, monospace" }}>
+                        {doc.moduleName || "—"}
+                      </td>
+                      <td style={{ fontSize: 13, color: "#8899bb" }}>{doc.version ? `v${doc.version}` : "—"}</td>
+                      <td style={{ fontSize: 13, color: "#fbbf24", fontFamily: "JetBrains Mono, monospace", paddingLeft: 4 }}>
+                        {doc.procedures}
+                      </td>
+                      <td style={{ fontSize: 12, color: "#3a4a66" }}>{formatDate(doc.uploadedAt)}</td>
+                      <td>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            background: badge.bg,
+                            color: badge.color,
+                            padding: "2px 8px",
+                            borderRadius: 20,
+                            fontFamily: "JetBrains Mono, monospace",
+                          }}
+                        >
+                          {badge.text}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -173,28 +189,39 @@ export default function DashboardPage() {
               Aktivitas
             </h2>
             <div className="flex flex-col gap-3">
-              {recentActivity.map((a) => (
-                <div key={`${a.time}-${a.detail}`} className="flex items-start gap-3">
-                  <div
-                    style={{ width: 6, height: 6, borderRadius: "50%", background: a.color, marginTop: 5, flexShrink: 0 }}
-                  />
-                  <div>
-                    <p style={{ fontSize: 12.5, color: "#e8edf5", fontWeight: 500 }}>{a.event}</p>
-                    <p style={{ fontSize: 11.5, color: "#3a4a66" }}>{a.detail}</p>
+              {recentActivity.length === 0 ? (
+                <p style={{ fontSize: 13, color: "#3a4a66" }}>Belum ada aktivitas</p>
+              ) : (
+                recentActivity.map((activity) => (
+                  <div key={activity.id} className="flex items-start gap-3">
+                    <div
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: "50%",
+                        background: activity.color,
+                        marginTop: 5,
+                        flexShrink: 0,
+                      }}
+                    />
+                    <div>
+                      <p style={{ fontSize: 12.5, color: "#e8edf5", fontWeight: 500 }}>{activity.event}</p>
+                      <p style={{ fontSize: 11.5, color: "#3a4a66" }}>{activity.detail}</p>
+                    </div>
+                    <span
+                      style={{
+                        marginLeft: "auto",
+                        fontSize: 10.5,
+                        color: "#3a4a66",
+                        fontFamily: "JetBrains Mono, monospace",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {formatActivityTime(activity.createdAt)}
+                    </span>
                   </div>
-                  <span
-                    style={{
-                      marginLeft: "auto",
-                      fontSize: 10.5,
-                      color: "#3a4a66",
-                      fontFamily: "JetBrains Mono, monospace",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {a.time}
-                  </span>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
 
@@ -203,25 +230,29 @@ export default function DashboardPage() {
               Topik
             </h2>
             <div className="flex flex-wrap gap-2">
-              {tagList.map(([tag, count]) => (
-                <span
-                  key={tag}
-                  style={{
-                    fontSize: 11.5,
-                    background: "#1a2235",
-                    color: "#aabbd4",
-                    padding: "4px 10px",
-                    borderRadius: 20,
-                    border: "1px solid #253048",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                  }}
-                >
-                  {tag}
-                  <span style={{ color: "#fbbf24", fontFamily: "JetBrains Mono, monospace", fontSize: 10 }}>{count}</span>
-                </span>
-              ))}
+              {tagList.length === 0 ? (
+                <p style={{ fontSize: 13, color: "#3a4a66" }}>Belum ada topik</p>
+              ) : (
+                tagList.map((item) => (
+                  <span
+                    key={item.tag}
+                    style={{
+                      fontSize: 11.5,
+                      background: "#1a2235",
+                      color: "#aabbd4",
+                      padding: "4px 10px",
+                      borderRadius: 20,
+                      border: "1px solid #253048",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                    }}
+                  >
+                    {item.tag}
+                    <span style={{ color: "#fbbf24", fontFamily: "JetBrains Mono, monospace", fontSize: 10 }}>{item.count}</span>
+                  </span>
+                ))
+              )}
             </div>
           </div>
         </div>

@@ -1,35 +1,72 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { IconDoc, IconUpload } from "@/components/icons";
 import { useDocuments } from "@/lib/documents-provider";
 import { formatDate, formatSize } from "@/lib/format";
 import type { DocItem } from "@/lib/types";
 
+const selectStyle = {
+  background: "#0f1520",
+  border: "1px solid #1a2235",
+  borderRadius: 8,
+  padding: "10px 12px",
+  fontSize: 13,
+  color: "#e8edf5",
+  outline: "none",
+  width: "100%",
+} as const;
+
 export default function DocumentPage() {
-  const { docs, setDocs } = useDocuments();
+  const { docs, filterOptions, loading, error, upload, remove } = useDocuments();
   const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [moduleId, setModuleId] = useState("all");
+  const [procedure, setProcedure] = useState("all");
+  const [documentCode, setDocumentCode] = useState("all");
+  const [version, setVersion] = useState("all");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const filtered = docs.filter((d) => d.name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return docs.filter((doc) => {
+      if (moduleId !== "all" && doc.moduleId !== moduleId) return false;
+      if (procedure !== "all" && !doc.procedureNames.some((name) => name === procedure)) return false;
+      if (documentCode !== "all" && doc.documentCode !== documentCode) return false;
+      if (version !== "all" && doc.version !== version) return false;
+      if (!term) return true;
+      const haystack = [
+        doc.name,
+        doc.fileName,
+        doc.documentCode,
+        doc.version,
+        doc.moduleName,
+        ...doc.procedureNames,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [docs, documentCode, moduleId, procedure, search, version]);
 
   const handleFiles = useCallback(
-    (files: FileList) => {
-      const newDocs: DocItem[] = Array.from(files).map((f, i) => ({
-        id: Date.now() + i + "",
-        name: f.name,
-        size: f.size,
-        type: f.name.split(".").pop()?.toLowerCase() || "pdf",
-        uploadedAt: new Date(),
-        pages: Math.floor(Math.random() * 80) + 10,
-        procedures: Math.floor(Math.random() * 15) + 1,
-        status: "ready",
-        tags: ["baru"],
-      }));
-      setDocs((prev) => [...newDocs, ...prev]);
+    async (files: FileList | null) => {
+      if (!files?.length) return;
+      setUploadError(null);
+      setUploading(true);
+      try {
+        await upload(files);
+      } catch (err) {
+        console.error(err);
+        setUploadError(err instanceof Error ? err.message : "Gagal mengunggah dokumen.");
+      } finally {
+        setUploading(false);
+      }
     },
-    [setDocs],
+    [upload],
   );
 
   return (
@@ -37,14 +74,15 @@ export default function DocumentPage() {
       <div className="flex items-end justify-between mb-8">
         <div>
           <h1 style={{ fontFamily: "DM Serif Display, serif", fontSize: 30, color: "#e8edf5", marginBottom: 6 }}>
-            Manajemen Dokumen
+            Manajemen TSD
           </h1>
           <p style={{ fontSize: 13.5, color: "#8899bb" }}>
-            {docs.length} dokumen tersimpan · {docs.reduce((s, d) => s + d.procedures, 0)} prosedur terindeks
+            {docs.length} TSD tersimpan · {docs.reduce((sum, doc) => sum + doc.procedures, 0)} prosedur terindeks
           </p>
         </div>
         <button
           onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
           style={{
             display: "flex",
             alignItems: "center",
@@ -56,11 +94,12 @@ export default function DocumentPage() {
             padding: "10px 18px",
             fontSize: 13.5,
             fontWeight: 600,
-            cursor: "pointer",
+            cursor: uploading ? "wait" : "pointer",
+            opacity: uploading ? 0.7 : 1,
             transition: "opacity 0.15s",
           }}
         >
-          <IconUpload /> Upload Dokumen
+          <IconUpload /> {uploading ? "Memproses…" : "Upload TSD"}
         </button>
         <input
           ref={fileInputRef}
@@ -68,7 +107,10 @@ export default function DocumentPage() {
           multiple
           accept=".pdf,.docx,.doc,.txt"
           style={{ display: "none" }}
-          onChange={(e) => e.target.files && handleFiles(e.target.files)}
+          onChange={(e) => {
+            handleFiles(e.target.files);
+            e.currentTarget.value = "";
+          }}
         />
       </div>
 
@@ -107,12 +149,16 @@ export default function DocumentPage() {
           <IconUpload />
         </div>
         <p style={{ fontSize: 14, color: "#aabbd4", fontWeight: 500 }}>
-          Seret & lepas dokumen di sini, atau <span style={{ color: "#fbbf24" }}>pilih file</span>
+          Seret & lepas TSD di sini, atau <span style={{ color: "#fbbf24" }}>pilih file</span>
         </p>
-        <p style={{ fontSize: 12, color: "#3a4a66", marginTop: 4 }}>DOCX</p>
+        <p style={{ fontSize: 12, color: "#3a4a66", marginTop: 4 }}>DOCX · PDF · TXT</p>
       </div>
 
-      <div style={{ position: "relative", marginBottom: 20 }}>
+      {(error || uploadError) && (
+        <p style={{ color: "#ef4444", fontSize: 13, marginBottom: 16 }}>{uploadError || error}</p>
+      )}
+
+      <div style={{ position: "relative", marginBottom: 12 }}>
         <svg
           width="16"
           height="16"
@@ -128,7 +174,7 @@ export default function DocumentPage() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Cari dokumen…"
+          placeholder="Cari judul, kode dokumen, modul, prosedur, atau versi…"
           style={{
             width: "100%",
             background: "#0f1520",
@@ -143,60 +189,148 @@ export default function DocumentPage() {
         />
       </div>
 
-      <div className="flex flex-col gap-3">
-        {filtered.map((doc) => (
-          <div
-            key={doc.id}
-            style={{
-              background: "#0f1520",
-              border: "1px solid #1a2235",
-              borderRadius: 12,
-              padding: "16px 20px",
-              display: "flex",
-              alignItems: "center",
-              gap: 16,
-              transition: "border-color 0.15s",
-            }}
-          >
-            <IconDoc type={doc.type} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontSize: 14, color: "#e8edf5", fontWeight: 500, marginBottom: 2 }}>{doc.name}</p>
-              <div className="flex items-center gap-4">
-                <span style={{ fontSize: 12, color: "#3a4a66" }}>{formatDate(doc.uploadedAt)}</span>
-                <span style={{ fontSize: 12, color: "#3a4a66" }}>{formatSize(doc.size)}</span>
-                <span style={{ fontSize: 12, color: "#8899bb" }}>{doc.pages} halaman</span>
-              </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gap: 10,
+          marginBottom: 20,
+        }}
+      >
+        <select value={moduleId} onChange={(e) => setModuleId(e.target.value)} style={selectStyle}>
+          <option value="all">Semua modul</option>
+          {filterOptions.modules.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+            </option>
+          ))}
+        </select>
+        <select value={procedure} onChange={(e) => setProcedure(e.target.value)} style={selectStyle}>
+          <option value="all">Semua prosedur</option>
+          {filterOptions.procedures.map((item) => (
+            <option key={item.id} value={item.name}>
+              {item.name}
+            </option>
+          ))}
+        </select>
+        <select value={documentCode} onChange={(e) => setDocumentCode(e.target.value)} style={selectStyle}>
+          <option value="all">Semua kode dokumen</option>
+          {filterOptions.documentCodes.map((code) => (
+            <option key={code} value={code}>
+              {code}
+            </option>
+          ))}
+        </select>
+        <select value={version} onChange={(e) => setVersion(e.target.value)} style={selectStyle}>
+          <option value="all">Semua versi</option>
+          {filterOptions.versions.map((item) => (
+            <option key={item} value={item}>
+              v{item}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {loading ? (
+        <p style={{ color: "#8899bb", fontSize: 13.5 }}>Memuat dokumen…</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {filtered.map((doc) => (
+            <DocumentCard key={doc.id} doc={doc} onDelete={remove} />
+          ))}
+          {filtered.length === 0 && (
+            <div style={{ textAlign: "center", padding: 48, color: "#3a4a66" }}>
+              <p style={{ fontSize: 14 }}>Tidak ada TSD yang cocok dengan filter</p>
             </div>
-            <div className="flex items-center gap-3">
-              {doc.tags.map((t) => (
-                <span
-                  key={t}
-                  style={{
-                    fontSize: 11,
-                    background: "#1a2235",
-                    color: "#8899bb",
-                    padding: "2px 8px",
-                    borderRadius: 20,
-                    border: "1px solid #253048",
-                  }}
-                >
-                  {t}
-                </span>
-              ))}
-            </div>
-            <div style={{ textAlign: "right", flexShrink: 0 }}>
-              <p style={{ fontSize: 20, fontWeight: 700, color: "#fbbf24", fontFamily: "JetBrains Mono, monospace" }}>
-                {doc.procedures}
-              </p>
-              <p style={{ fontSize: 11, color: "#3a4a66" }}>prosedur</p>
-            </div>
-          </div>
-        ))}
-        {filtered.length === 0 && (
-          <div style={{ textAlign: "center", padding: 48, color: "#3a4a66" }}>
-            <p style={{ fontSize: 14 }}>Tidak ada dokumen ditemukan</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DocumentCard({ doc, onDelete }: { doc: DocItem; onDelete: (id: string) => Promise<void> }) {
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      await onDelete(doc.id);
+    } catch (err) {
+      console.error(err);
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        background: "#0f1520",
+        border: "1px solid #1a2235",
+        borderRadius: 12,
+        padding: "16px 20px",
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
+        transition: "border-color 0.15s",
+      }}
+    >
+      <IconDoc type={doc.type} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontSize: 14, color: "#e8edf5", fontWeight: 500, marginBottom: 4 }}>{doc.name}</p>
+        <div className="flex items-center gap-3" style={{ flexWrap: "wrap" }}>
+          {doc.moduleName && (
+            <span style={{ fontSize: 11, color: "#fbbf24", fontFamily: "JetBrains Mono, monospace" }}>{doc.moduleName}</span>
+          )}
+          {doc.documentCode && <span style={{ fontSize: 12, color: "#8899bb" }}>{doc.documentCode}</span>}
+          {doc.version && <span style={{ fontSize: 12, color: "#3a4a66" }}>v{doc.version}</span>}
+          <span style={{ fontSize: 12, color: "#3a4a66" }}>{formatDate(doc.uploadedAt)}</span>
+          <span style={{ fontSize: 12, color: "#3a4a66" }}>{formatSize(doc.size)}</span>
+        </div>
+        {doc.procedureNames.length > 0 && (
+          <div className="flex items-center gap-2" style={{ flexWrap: "wrap", marginTop: 8 }}>
+            {doc.procedureNames.map((name) => (
+              <span
+                key={name}
+                style={{
+                  fontSize: 11,
+                  background: "#1a2235",
+                  color: "#aabbd4",
+                  padding: "2px 8px",
+                  borderRadius: 20,
+                  border: "1px solid #253048",
+                  fontFamily: "JetBrains Mono, monospace",
+                }}
+              >
+                {name}
+              </span>
+            ))}
           </div>
         )}
+      </div>
+      <div style={{ textAlign: "right", flexShrink: 0 }}>
+        <p style={{ fontSize: 20, fontWeight: 700, color: "#fbbf24", fontFamily: "JetBrains Mono, monospace" }}>
+          {doc.procedures}
+        </p>
+        <p style={{ fontSize: 11, color: "#3a4a66" }}>prosedur</p>
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={deleting}
+          style={{
+            marginTop: 8,
+            background: "transparent",
+            border: "1px solid #253048",
+            color: deleting ? "#3a4a66" : "#8899bb",
+            borderRadius: 6,
+            padding: "4px 8px",
+            fontSize: 11,
+            cursor: deleting ? "wait" : "pointer",
+          }}
+        >
+          {deleting ? "Menghapus…" : "Hapus"}
+        </button>
       </div>
     </div>
   );
