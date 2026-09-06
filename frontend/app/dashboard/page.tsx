@@ -122,7 +122,7 @@ export default function DashboardPage() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["Dokumen", "Modul", "Versi", "Prosedur", "Diupload", "Status"].map((h) => (
+                  {["Dokumen", "Modul", "Versi", "Halaman", "Prosedur", "Diupload", "Status"].map((h) => (
                     <th
                       key={h}
                       style={{
@@ -157,6 +157,9 @@ export default function DashboardPage() {
                         {doc.moduleName || "—"}
                       </td>
                       <td style={{ fontSize: 13, color: "#8899bb" }}>{doc.version ? `v${doc.version}` : "—"}</td>
+                      <td style={{ fontSize: 13, color: "#e8edf5", fontFamily: "JetBrains Mono, monospace" }}>
+                        {doc.pages || "—"}
+                      </td>
                       <td style={{ fontSize: 13, color: "#fbbf24", fontFamily: "JetBrains Mono, monospace", paddingLeft: 4 }}>
                         {doc.procedures}
                       </td>

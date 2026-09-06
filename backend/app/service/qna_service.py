@@ -1,5 +1,5 @@
 from app import db
-from app.models.qna_model import ChatMessage
+from app.models import ChatMessage
 from app.service.document_service import create_activity, parse_id
 from app.service.rag_service import answer_question
 

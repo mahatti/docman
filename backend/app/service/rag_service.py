@@ -1,28 +1,40 @@
-from pathlib import Path
-
 import hashlib
 import os
+import re
 import warnings
 
 import requests
-from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document as LCDocument
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_core.retrievers import BaseRetriever
+from pydantic import Field
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from sqlalchemy import or_
+
 from app import db
-from app.config.config import BASE_DIR, Config
-from app.models.document_model import Document, DocumentChunk
-from app.service.extract_service import count_procedures, read_file_text
+from app.config import BASE_DIR, Config
+from app.models import Document, DocumentChunk
+from app.service.extract_service import (
+    count_procedures,
+    format_table_catalog,
+    load_paged_text,
+    annotate_table_labels,
+    table_question_role,
+)
 
 SYSTEM_PROMPT = (
     "Anda adalah asisten DocMan. Jawab hanya berdasarkan konteks dokumen. "
     "Gunakan bahasa Indonesia yang jelas. Jika informasi tidak ada di konteks, katakan demikian. "
-    "Sebutkan nama dokumen dan halaman jika relevan. Format poin penting dengan markdown **tebal**.\n\n"
+    "Sebutkan nama dokumen dan halaman jika relevan. Format poin penting dengan markdown **tebal**.\n"
+    "Jika pertanyaan tentang tabel, bedakan dengan ketat:\n"
+    "- Tabel sumber = bagian Table Source / 3.b.1 Table Source.\n"
+    "- Tabel target = bagian Target Table / Table Target / 3.b.3 Table Target.\n"
+    "- Jangan mencampur sumber dan target. Jangan mengisi dari Data Models atau daftar kolom "
+    "kecuali nama tabel itu muncul di bagian Source/Target.\n"
+    "- Jika ada katalog tabel di konteks, utamakan katalog itu.\n\n"
     "{context}"
 )
 
@@ -74,35 +86,23 @@ def get_llm() -> ChatOpenAI:
     )
 
 
-def load_file(file_path: str, file_type: str, doc_name: str) -> list[LCDocument]:
-    ext = (file_type or Path(file_path).suffix.lstrip(".")).lower()
-    if ext == "pdf":
-        loaded = PyPDFLoader(file_path).load()
-        docs = []
-        for item in loaded:
-            page = int(item.metadata.get("page", 0)) + 1
-            docs.append(
-                LCDocument(
-                    page_content=item.page_content,
-                    metadata={"doc_name": doc_name, "page": page, "source": file_path},
-                )
-            )
-        return docs or [LCDocument(page_content="", metadata={"doc_name": doc_name, "page": 1})]
-    if ext in {"txt", "docx"}:
-        content = read_file_text(file_path, ext)
-        return [
-            LCDocument(
-                page_content=content,
-                metadata={"doc_name": doc_name, "page": 1, "source": file_path},
-            )
-        ]
-    if ext == "doc":
-        raise ValueError("Format .doc lama tidak didukung. Unggah ulang sebagai .docx atau PDF.")
-    raise ValueError(f"Tipe file tidak didukung: {ext}")
+def load_file(file_path: str, file_type: str, doc_name: str) -> tuple[int, list[LCDocument]]:
+    total_pages, pages = load_paged_text(file_path, file_type)
+    docs = [
+        LCDocument(
+            page_content=annotate_table_labels(text),
+            metadata={"doc_name": doc_name, "page": page, "source": file_path},
+        )
+        for page, text in pages
+        if text.strip()
+    ]
+    return max(total_pages, 1), docs or [
+        LCDocument(page_content="", metadata={"doc_name": doc_name, "page": 1})
+    ]
 
 
 def ingest_document(document: Document) -> None:
-    raw_docs = load_file(document.file_url, document.type, document.title)
+    total_pages, raw_docs = load_file(document.file_url, document.type, document.title)
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=Config.CHUNK_SIZE,
         chunk_overlap=Config.CHUNK_OVERLAP,
@@ -115,27 +115,26 @@ def ingest_document(document: Document) -> None:
     embeddings = get_embeddings().embed_documents([item.page_content for item in splits])
     DocumentChunk.query.filter_by(document_id=document.id).delete()
 
-    pages = set()
     for index, (split, vector) in enumerate(zip(splits, embeddings)):
         page = int(split.metadata.get("page") or 1)
-        pages.add(page)
         db.session.add(
             DocumentChunk(
                 document_id=document.id,
-                page=page,
+                page=max(page, 1),
                 chunk_index=index,
                 content=split.page_content.strip(),
                 embedding=vector,
             )
         )
 
-    document.pages = max(pages) if pages else 1
+    document.pages = total_pages
     document.procedures = count_procedures("\n".join(item.page_content for item in splits))
 
 
 class DocManVectorRetriever(BaseRetriever):
     document_id: int | None = None
     k: int = 6
+    extra_terms: list[str] = Field(default_factory=list)
 
     def _get_relevant_documents(self, query: str) -> list[LCDocument]:
         query_vector = get_embeddings().embed_query(query)
@@ -148,11 +147,26 @@ class DocManVectorRetriever(BaseRetriever):
         if self.document_id:
             query_set = query_set.filter(DocumentChunk.document_id == self.document_id)
 
-        chunks = (
+        vector_chunks = (
             query_set.order_by(DocumentChunk.embedding.cosine_distance(query_vector))
             .limit(self.k)
             .all()
         )
+        chunks = list(vector_chunks)
+        seen = {chunk.id for chunk in chunks}
+        if self.extra_terms:
+            keyword_filter = or_(*[DocumentChunk.content.ilike(f"%{term}%") for term in self.extra_terms])
+            keyword_chunks = (
+                query_set.filter(keyword_filter)
+                .order_by(DocumentChunk.embedding.cosine_distance(query_vector))
+                .limit(self.k)
+                .all()
+            )
+            for chunk in keyword_chunks:
+                if chunk.id in seen:
+                    continue
+                seen.add(chunk.id)
+                chunks.append(chunk)
         results = []
         for chunk in chunks:
             doc_name = chunk.document.title if chunk.document else "Dokumen"
@@ -169,6 +183,63 @@ class DocManVectorRetriever(BaseRetriever):
         return results
 
 
+def _document_mentioned(document: Document, question: str) -> bool:
+    qcompact = re.sub(r"[^a-z0-9]+", "", (question or "").lower())
+    if len(qcompact) < 6:
+        return False
+    candidates = [document.document_code, document.title, document.file_name]
+    for raw in candidates:
+        if not raw:
+            continue
+        compact = re.sub(r"[^a-z0-9]+", "", raw.lower())
+        if len(compact) >= 8 and compact in qcompact:
+            return True
+        core = compact
+        if raw and "-" in raw:
+            core = re.sub(r"[^a-z0-9]+", "", raw.split("-", 1)[-1].lower())
+        if len(core) >= 8 and core in qcompact:
+            return True
+    return False
+
+
+def _catalog_context_docs(question: str, document_id: int | None) -> list[LCDocument]:
+    query = Document.query.filter(Document.status == "ready")
+    if document_id:
+        query = query.filter(Document.id == document_id)
+    documents = query.all()
+    mentioned = [item for item in documents if _document_mentioned(item, question)]
+    if mentioned:
+        documents = mentioned
+    docs = []
+    for document in documents:
+        text = format_table_catalog(document.table_catalog, question, document.title)
+        if not text:
+            continue
+        docs.append(
+            LCDocument(
+                page_content=text,
+                metadata={
+                    "doc_name": document.title,
+                    "page": "katalog",
+                    "document_id": document.id,
+                    "catalog": True,
+                },
+            )
+        )
+    return docs
+
+
+def _table_search_terms(question: str) -> list[str]:
+    role = table_question_role(question)
+    if role == "source":
+        return ["Table Source", "TABEL SUMBER", "3.b.1"]
+    if role == "target":
+        return ["Target Table", "Table Target", "TABEL TARGET", "3.b.3"]
+    if role == "both":
+        return ["Table Source", "Target Table", "TABEL SUMBER", "TABEL TARGET"]
+    return []
+
+
 def answer_question(question: str, document_id: int | None = None) -> tuple[str, list[dict]]:
     ready = Document.query.filter_by(status="ready").count()
     if document_id:
@@ -179,7 +250,9 @@ def answer_question(question: str, document_id: int | None = None) -> tuple[str,
             [],
         )
 
-    retriever = DocManVectorRetriever(document_id=document_id, k=Config.RETRIEVE_K)
+    terms = _table_search_terms(question)
+    retrieve_k = Config.RETRIEVE_K + 4 if terms else Config.RETRIEVE_K
+    retriever = DocManVectorRetriever(document_id=document_id, k=retrieve_k, extra_terms=terms)
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT),
@@ -191,12 +264,14 @@ def answer_question(question: str, document_id: int | None = None) -> tuple[str,
         prompt,
         document_prompt=DOCUMENT_PROMPT,
     )
-    rag_chain = create_retrieval_chain(retriever, combine_docs_chain)
-    result = rag_chain.invoke({"input": question})
-    answer = (result.get("answer") or "").strip()
+    retrieved = retriever.invoke(question)
+    catalog_docs = _catalog_context_docs(question, document_id) if terms else []
+    context_docs = catalog_docs + list(retrieved)
+    result = combine_docs_chain.invoke({"input": question, "context": context_docs})
+    answer = (result if isinstance(result, str) else (result.get("answer") or "")).strip()
     sources = []
     seen = set()
-    for item in result.get("context") or []:
+    for item in retrieved:
         doc_name = item.metadata.get("doc_name") or "Dokumen"
         page = int(item.metadata.get("page") or 1)
         excerpt = (item.page_content or "").strip().replace("\n", " ")

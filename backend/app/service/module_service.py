@@ -1,5 +1,5 @@
 from app import db
-from app.models.module_model import Module
+from app.models import Module
 from app.service.document_service import parse_id
 
 

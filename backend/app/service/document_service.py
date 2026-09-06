@@ -5,12 +5,14 @@ from sqlalchemy.orm import joinedload, selectinload
 from werkzeug.utils import secure_filename
 
 from app import db
-from app.config.config import Config
-from app.models.activity_model import Activity
-from app.models.document_model import Document
-from app.models.module_model import Module
-from app.models.procedure_model import Procedure
-from app.service.extract_service import extract_tsd_from_file, tags_from_filename
+from app.config import Config
+from app.models import Activity, Document, Module, Procedure
+from app.service.extract_service import (
+    extract_tsd_from_file,
+    load_paged_text,
+    page_for_content,
+    tags_from_filename,
+)
 
 
 def parse_id(value):
@@ -152,6 +154,8 @@ def apply_tsd_metadata(document: Document, metadata: dict) -> None:
         document.title = metadata["title"]
     if metadata.get("tags"):
         document.tags = metadata["tags"]
+    if metadata.get("tables"):
+        document.table_catalog = metadata["tables"]
 
     linked = []
     seen = set()
@@ -221,6 +225,90 @@ def _process_document(document: Document):
     ingest_document(document)
     metadata = extract_tsd_from_file(document.file_url, document.type, document.file_name or document.title)
     apply_tsd_metadata(document, metadata)
+
+
+def repair_stored_page_numbers() -> None:
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models import ChatMessage, DocumentChunk
+
+    docs = Document.query.filter(Document.status == "ready").all()
+    page_map: dict[int, list[tuple[int, str]]] = {}
+    for document in docs:
+        if not document.file_url or not Path(document.file_url).exists():
+            continue
+        distinct_chunk_pages = (
+            db.session.query(DocumentChunk.page)
+            .filter(DocumentChunk.document_id == document.id)
+            .distinct()
+            .count()
+        )
+        already_mapped = (document.pages or 0) > 1 and distinct_chunk_pages > 1
+        if already_mapped:
+            continue
+        try:
+            total_pages, pages = load_paged_text(document.file_url, document.type)
+        except Exception:
+            continue
+        document.pages = max(total_pages, 1)
+        if not pages:
+            continue
+        page_map[document.id] = pages
+        chunks = DocumentChunk.query.filter_by(document_id=document.id).all()
+        for chunk in chunks:
+            chunk.page = page_for_content(chunk.content or "", pages)
+
+    for message in ChatMessage.query.filter(ChatMessage.role == "assistant").all():
+        sources = list(message.sources or [])
+        if not sources:
+            continue
+        if any(int(source.get("page") or 1) > 1 for source in sources):
+            continue
+        updated = []
+        changed = False
+        for source in sources:
+            excerpt = source.get("excerpt") or ""
+            page = source.get("page")
+            chunk = None
+            snippet = excerpt[:40].rstrip(".")
+            if snippet:
+                chunk = (
+                    DocumentChunk.query.filter(DocumentChunk.content.ilike(f"%{snippet}%"))
+                    .order_by(DocumentChunk.id.asc())
+                    .first()
+                )
+            if chunk is not None:
+                page = chunk.page
+            elif excerpt and page_map:
+                combined = [item for pages in page_map.values() for item in pages]
+                page = page_for_content(excerpt, combined)
+            next_source = {**source, "page": page or 1}
+            if next_source.get("page") != source.get("page"):
+                changed = True
+            updated.append(next_source)
+        if changed:
+            message.sources = updated
+            flag_modified(message, "sources")
+
+
+def repair_table_catalogs() -> None:
+    docs = Document.query.filter(Document.status == "ready").all()
+    for document in docs:
+        catalog = document.table_catalog or {}
+        if catalog.get("source") or catalog.get("target"):
+            continue
+        if not document.file_url or not Path(document.file_url).exists():
+            continue
+        try:
+            metadata = extract_tsd_from_file(
+                document.file_url,
+                document.type,
+                document.file_name or document.title,
+            )
+        except Exception:
+            continue
+        if metadata.get("tables"):
+            document.table_catalog = metadata["tables"]
 
 
 def delete_document(document_id) -> bool:

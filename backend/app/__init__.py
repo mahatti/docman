@@ -6,7 +6,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
-from app.config.config import Config
+from app.config import Config
 
 db = SQLAlchemy()
 
@@ -73,12 +73,18 @@ def create_app():
     with app.app_context():
         from app.models import Activity, ChatMessage, Document, DocumentChunk, Module, Procedure  # noqa: F401
         from app.schema import ensure_pgvector_column, ensure_schema
-        from app.service.document_service import default_module
+        from app.service.document_service import default_module, repair_stored_page_numbers, repair_table_catalogs
 
         ensure_schema(db)
         db.create_all()
         ensure_pgvector_column(db)
         default_module()
         db.session.commit()
+        try:
+            repair_stored_page_numbers()
+            repair_table_catalogs()
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
     return app

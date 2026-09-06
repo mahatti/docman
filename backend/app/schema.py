@@ -10,6 +10,7 @@ SCHEMA_STATEMENTS = [
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS error_message TEXT",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS document_code VARCHAR",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS version VARCHAR(32)",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS table_catalog JSONB",
     """
     CREATE TABLE IF NOT EXISTS procedures (
         id BIGSERIAL PRIMARY KEY,

@@ -285,6 +285,7 @@ function DocumentCard({ doc, onDelete }: { doc: DocItem; onDelete: (id: string) 
           )}
           {doc.documentCode && <span style={{ fontSize: 12, color: "#8899bb" }}>{doc.documentCode}</span>}
           {doc.version && <span style={{ fontSize: 12, color: "#3a4a66" }}>v{doc.version}</span>}
+          <span style={{ fontSize: 12, color: "#3a4a66" }}>{doc.pages ? `${doc.pages} hal` : "—"}</span>
           <span style={{ fontSize: 12, color: "#3a4a66" }}>{formatDate(doc.uploadedAt)}</span>
           <span style={{ fontSize: 12, color: "#3a4a66" }}>{formatSize(doc.size)}</span>
         </div>

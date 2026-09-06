@@ -1,5 +1,5 @@
 from app import db
-from app.models.procedure_model import Procedure
+from app.models import Procedure
 from app.service.document_service import parse_id
 
 
