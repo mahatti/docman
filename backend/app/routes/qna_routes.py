@@ -11,6 +11,21 @@ def list_messages():
     return jsonify({"status": "success", "data": [msg.to_dict() for msg in messages]})
 
 
+@qna_bp.delete("/messages")
+def delete_messages():
+    try:
+        deleted = qna_service.clear_messages()
+    except Exception as exc:
+        return jsonify({"status": "error", "message": f"Gagal menghapus riwayat percakapan: {exc}"}), 500
+    return jsonify(
+        {
+            "status": "success",
+            "data": {"deleted": deleted},
+            "message": "Riwayat percakapan dihapus",
+        }
+    )
+
+
 @qna_bp.post("/ask")
 def ask():
     payload = request.get_json(silent=True) or {}

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconSend } from "@/components/icons";
-import { askQuestion, fetchMessages } from "@/lib/api";
+import { IconSend, IconTrash } from "@/components/icons";
+import { askQuestion, clearChatHistory, fetchMessages } from "@/lib/api";
 import { useDocuments } from "@/lib/documents-provider";
 import type { ChatMessage } from "@/lib/types";
 
@@ -15,6 +15,8 @@ export default function QnaPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<string>("all");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -54,6 +56,22 @@ export default function QnaPage() {
     }
   };
 
+  const clearHistory = async () => {
+    if (clearing || loading || messages.length === 0) return;
+    setError(null);
+    setClearing(true);
+    try {
+      await clearChatHistory();
+      setMessages([]);
+      setConfirmClear(false);
+    } catch (err) {
+      console.error("Gagal menghapus riwayat percakapan", err);
+      setError(err instanceof Error ? err.message : "Gagal menghapus riwayat percakapan.");
+    } finally {
+      setClearing(false);
+    }
+  };
+
   const suggestions = [
     "Prosedur apa saja yang ada di TSD ini?",
     "Jelaskan USP_INSERT_DETAIL_CAT2",
@@ -62,13 +80,40 @@ export default function QnaPage() {
   ];
 
   return (
+    <>
     <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <div style={{ padding: "24px 32px 16px", borderBottom: "1px solid #1a2235", flexShrink: 0 }}>
-          <h1 style={{ fontFamily: "DM Serif Display, serif", fontSize: 24, color: "#e8edf5" }}>Tanya Jawab Dokumen</h1>
-          <p style={{ fontSize: 13, color: "#8899bb" }}>
-            Ajukan pertanyaan tentang dokumen Anda — sistem akan mencari jawaban dari dokumen Anda
-          </p>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 style={{ fontFamily: "DM Serif Display, serif", fontSize: 24, color: "#e8edf5" }}>Tanya Jawab Dokumen</h1>
+              <p style={{ fontSize: 13, color: "#8899bb" }}>
+                Ajukan pertanyaan tentang dokumen Anda — sistem akan mencari jawaban dari dokumen Anda
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setConfirmClear(true)}
+              disabled={messages.length === 0 || loading || clearing}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                background: "transparent",
+                border: "1px solid #253048",
+                color: messages.length === 0 || loading || clearing ? "#3a4a66" : "#8899bb",
+                borderRadius: 8,
+                padding: "7px 12px",
+                fontSize: 12,
+                cursor: messages.length === 0 || loading || clearing ? "default" : "pointer",
+                flexShrink: 0,
+                marginTop: 4,
+              }}
+            >
+              <IconTrash />
+              {clearing ? "Menghapus…" : "Hapus riwayat"}
+            </button>
+          </div>
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }} className="flex flex-col gap-5">
@@ -352,5 +397,73 @@ export default function QnaPage() {
         ))}
       </div>
     </div>
+
+    {confirmClear && (
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(10, 14, 23, 0.72)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 50,
+          padding: 24,
+        }}
+      >
+        <div
+          style={{
+            width: "100%",
+            maxWidth: 380,
+            background: "#0f1520",
+            border: "1px solid #253048",
+            borderRadius: 12,
+            padding: "22px 24px",
+          }}
+        >
+          <h2 style={{ fontFamily: "DM Serif Display, serif", fontSize: 20, color: "#e8edf5", marginBottom: 8 }}>
+            Hapus riwayat percakapan?
+          </h2>
+          <p style={{ fontSize: 13, color: "#8899bb", lineHeight: 1.6, marginBottom: 20 }}>
+            Semua pertanyaan dan jawaban akan dihapus. Tindakan ini tidak dapat dibatalkan.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmClear(false)}
+              disabled={clearing}
+              style={{
+                background: "transparent",
+                border: "1px solid #253048",
+                color: "#8899bb",
+                borderRadius: 8,
+                padding: "8px 14px",
+                fontSize: 13,
+                cursor: clearing ? "default" : "pointer",
+              }}
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              onClick={clearHistory}
+              disabled={clearing}
+              style={{
+                background: "#ef4444",
+                border: "none",
+                color: "#fff",
+                borderRadius: 8,
+                padding: "8px 14px",
+                fontSize: 13,
+                cursor: clearing ? "wait" : "pointer",
+              }}
+            >
+              {clearing ? "Menghapus…" : "Hapus riwayat"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

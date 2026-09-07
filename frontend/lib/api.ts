@@ -164,6 +164,14 @@ export async function fetchMessages(): Promise<ChatMessage[]> {
   return (data || []).map(mapChatMessage);
 }
 
+export async function clearChatHistory(): Promise<void> {
+  await request<unknown>("/api/qna/messages", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+}
+
 export async function askQuestion(question: string, documentId?: string): Promise<ChatMessage> {
   const data = await request<ApiChatMessage>("/api/qna/ask", {
     method: "POST",

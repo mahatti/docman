@@ -8,6 +8,12 @@ def list_messages(limit: int = 50):
     return ChatMessage.query.order_by(ChatMessage.timestamp.asc()).limit(limit).all()
 
 
+def clear_messages() -> int:
+    deleted = ChatMessage.query.delete(synchronize_session=False)
+    db.session.commit()
+    return deleted
+
+
 def ask_question(question: str, document_id=None) -> ChatMessage:
     question = (question or "").strip()
     if not question:
