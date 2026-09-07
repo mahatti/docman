@@ -203,6 +203,7 @@ def save_upload(file_storage, module_id=None) -> Document:
     stored_path = upload_dir / f"{document.id}_{safe_name}"
     temp_path.replace(stored_path)
     document.file_url = str(stored_path)
+    db.session.commit()
 
     try:
         _process_document(document)

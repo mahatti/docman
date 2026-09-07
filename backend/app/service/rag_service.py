@@ -4,6 +4,7 @@ import re
 import warnings
 
 import requests
+from sympy import python
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.documents import Document as LCDocument
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
@@ -25,18 +26,19 @@ from app.service.extract_service import (
     table_question_role,
 )
 
-SYSTEM_PROMPT = (
-    "Anda adalah asisten DocMan. Jawab hanya berdasarkan konteks dokumen. "
-    "Gunakan bahasa Indonesia yang jelas. Jika informasi tidak ada di konteks, katakan demikian. "
-    "Sebutkan nama dokumen dan halaman jika relevan. Format poin penting dengan markdown **tebal**.\n"
-    "Jika pertanyaan tentang tabel, bedakan dengan ketat:\n"
-    "- Tabel sumber = bagian Table Source / 3.b.1 Table Source.\n"
-    "- Tabel target = bagian Target Table / Table Target / 3.b.3 Table Target.\n"
-    "- Jangan mencampur sumber dan target. Jangan mengisi dari Data Models atau daftar kolom "
-    "kecuali nama tabel itu muncul di bagian Source/Target.\n"
-    "- Jika ada katalog tabel di konteks, utamakan katalog itu.\n\n"
-    "{context}"
+SYSTEM_PROMPT = ( 
+    "Anda adalah asisten DocMan. Jawab hanya berdasarkan konteks dokumen. " 
+    "Gunakan bahasa Indonesia yang jelas. Jika informasi tidak ada di konteks, gunakan pehamaman dan penjelasan yang sesuai. " 
+    "Sebutkan nama dokumen dan halaman jika relevan. Format poin penting dengan markdown **tebal**.\n" 
+    "Jika pertanyaan tentang tabel, bedakan dengan ketat:\n" 
+    "- Tabel sumber = bagian Table Source / 3.b.1 Table Source.\n" 
+    "- Tabel target = bagian Target Table / Table Target / 3.b.3 Table Target.\n" 
+    "- Jangan mencampur sumber dan target. Jangan mengisi dari Data Models atau daftar kolom " 
+    "kecuali nama tabel itu muncul di bagian Source/Target.\n" 
+    "- Jika ada katalog tabel di konteks, utamakan katalog itu.\n\n" "{context}"
 )
+                 
+
 
 DOCUMENT_PROMPT = PromptTemplate.from_template("[{doc_name} | halaman {page}]\n{page_content}")
 
@@ -267,6 +269,7 @@ def answer_question(question: str, document_id: int | None = None) -> tuple[str,
     retrieved = retriever.invoke(question)
     catalog_docs = _catalog_context_docs(question, document_id) if terms else []
     context_docs = catalog_docs + list(retrieved)
+    db.session.remove()
     result = combine_docs_chain.invoke({"input": question, "context": context_docs})
     answer = (result if isinstance(result, str) else (result.get("answer") or "")).strip()
     sources = []

@@ -22,7 +22,8 @@ def ask_question(question: str, document_id=None) -> ChatMessage:
     parsed_document_id = parse_id(document_id)
     user_msg = ChatMessage(role="user", content=question, document_id=parsed_document_id)
     db.session.add(user_msg)
-    db.session.flush()
+    db.session.commit()
+    db.session.remove()
 
     answer, sources = answer_question(question, parsed_document_id)
 

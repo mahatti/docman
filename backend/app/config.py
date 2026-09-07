@@ -4,9 +4,30 @@ from pathlib import Path
 from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
+from sqlalchemy.pool import NullPool
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BASE_DIR / ".env")
+
+
+def _engine_options() -> dict:
+    uri = os.getenv("DATABASE_URL", "")
+    # Supabase session-mode pooler caps clients at pool_size (often 15).
+    # A local QueuePool on top of that — plus Flask reloader processes —
+    # exhausts the cap. Let the pooler own pooling and close connections
+    # after each checkout.
+    if "pooler.supabase.com" in uri:
+        return {
+            "poolclass": NullPool,
+            "pool_pre_ping": True,
+        }
+    return {
+        "pool_size": 5,
+        "max_overflow": 2,
+        "pool_pre_ping": True,
+        "pool_recycle": 280,
+        "pool_use_lifo": True,
+    }
 
 
 def _database_uri() -> str:
@@ -30,10 +51,7 @@ class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "docman-dev-secret")
     SQLALCHEMY_DATABASE_URI = _database_uri()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_pre_ping": True,
-        "pool_recycle": 280,
-    }
+    SQLALCHEMY_ENGINE_OPTIONS = _engine_options()
 
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")

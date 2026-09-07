@@ -1,3 +1,4 @@
+import atexit
 import os
 
 from flask import Flask, jsonify
@@ -86,5 +87,16 @@ def create_app():
             db.session.commit()
         except Exception:
             db.session.rollback()
+        finally:
+            db.session.remove()
 
+    def _dispose_engine():
+        try:
+            with app.app_context():
+                db.session.remove()
+                db.engine.dispose()
+        except Exception:
+            pass
+
+    atexit.register(_dispose_engine)
     return app
