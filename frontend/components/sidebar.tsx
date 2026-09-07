@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { IconChat, IconFile, IconGrid } from "./icons";
 
 const NAV = [
@@ -12,6 +13,11 @@ const NAV = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [activePath, setActivePath] = useState<string | null>(null);
+
+  useEffect(() => {
+    setActivePath(pathname);
+  }, [pathname]);
 
   return (
     <aside
@@ -52,7 +58,7 @@ export function Sidebar() {
           NAVIGASI
         </p>
         {NAV.map((item) => {
-          const active = pathname === item.href;
+          const active = activePath === item.href;
           return (
             <Link
               key={item.href}

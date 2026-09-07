@@ -6,7 +6,7 @@ from werkzeug.utils import secure_filename
 
 from app import db
 from app.config import Config
-from app.models import Activity, Document, Module, Procedure
+from app.models import Activity, Document, DocumentChunk, Module, Procedure
 from app.service.extract_service import (
     extract_tsd_from_file,
     load_paged_text,
@@ -316,15 +316,26 @@ def delete_document(document_id) -> bool:
     if not document:
         return False
 
-    if document.file_url:
-        path = Path(document.file_url)
-        if path.exists():
-            path.unlink()
-
     title = document.title
-    db.session.delete(document)
-    create_activity("Dokumen dihapus", title, "#ef4444")
-    db.session.commit()
+    file_url = document.file_url
+
+    try:
+        DocumentChunk.query.filter_by(document_id=document.id).delete(synchronize_session=False)
+        document.linked_procedures = []
+        db.session.delete(document)
+        create_activity("Dokumen dihapus", title, "#ef4444")
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+
+    if file_url:
+        path = Path(file_url)
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            pass
     return True
 
 

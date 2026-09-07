@@ -138,7 +138,11 @@ export async function uploadDocuments(files: FileList | File[]): Promise<DocItem
 }
 
 export async function deleteDocument(documentId: string): Promise<void> {
-  await request<unknown>(`/api/documents/${documentId}`, { method: "DELETE" });
+  await request<unknown>(`/api/documents/${documentId}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
 }
 
 export async function fetchDashboard(): Promise<DashboardSummary> {

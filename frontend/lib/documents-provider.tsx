@@ -65,8 +65,13 @@ export function DocumentsProvider({ children }: { children: ReactNode }) {
   const remove = useCallback(
     async (documentId: string) => {
       setError(null);
-      await deleteDocument(documentId);
-      await refresh();
+      try {
+        await deleteDocument(documentId);
+        await refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Gagal menghapus dokumen.");
+        throw err;
+      }
     },
     [refresh],
   );

@@ -69,7 +69,10 @@ def download_document(document_id):
 
 @document_bp.delete("/<document_id>")
 def delete_document(document_id):
-    deleted = document_service.delete_document(document_id)
+    try:
+        deleted = document_service.delete_document(document_id)
+    except Exception as exc:
+        return jsonify({"status": "error", "message": f"Gagal menghapus dokumen: {exc}"}), 500
     if not deleted:
         return jsonify({"status": "error", "message": "Dokumen tidak ditemukan"}), 404
-    return jsonify({"status": "success", "message": "Dokumen dihapus"})
+    return jsonify({"status": "success", "data": None, "message": "Dokumen dihapus"})

@@ -101,6 +101,7 @@ class Document(db.Model):
         "DocumentChunk",
         backref="document",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="dynamic",
     )
     linked_procedures = db.relationship(
