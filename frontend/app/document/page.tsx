@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { IconDoc, IconUpload } from "@/components/icons";
+import { IconDoc, IconDownload, IconUpload } from "@/components/icons";
 import { isDocxFile, openDocumentInWord } from "@/lib/api";
 import { useDocuments } from "@/lib/documents-provider";
 import { formatDate, formatSize } from "@/lib/format";
 import type { DocItem } from "@/lib/types";
 
+const TSD_TEMPLATE_HREF = "/templates/NTT_Data_Draft%20TSD%20TEMPLATE.docx";
+const TSD_TEMPLATE_NAME = "NTT_Data_Draft TSD TEMPLATE.docx";
 const DOCX_ACCEPT = ".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 const actionButtonStyle = {
@@ -102,27 +104,49 @@ export default function DocumentPage() {
             {docs.length} TSD tersimpan · {docs.reduce((sum, doc) => sum + doc.procedures, 0)} prosedur terindeks
           </p>
         </div>
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            background: "#fbbf24",
-            color: "#0a0e17",
-            border: "none",
-            borderRadius: 8,
-            padding: "10px 18px",
-            fontSize: 13.5,
-            fontWeight: 600,
-            cursor: uploading ? "wait" : "pointer",
-            opacity: uploading ? 0.7 : 1,
-            transition: "opacity 0.15s",
-          }}
-        >
-          <IconUpload /> {uploading ? "Memproses…" : "Upload TSD"}
-        </button>
+        <div className="flex items-center gap-3">
+          <a
+            href={TSD_TEMPLATE_HREF}
+            download={TSD_TEMPLATE_NAME}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              background: "transparent",
+              color: "#e8edf5",
+              border: "1px solid #253048",
+              borderRadius: 8,
+              padding: "10px 18px",
+              fontSize: 13.5,
+              fontWeight: 600,
+              cursor: "pointer",
+              textDecoration: "none",
+            }}
+          >
+            <IconDownload /> Unduh Template
+          </a>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              background: "#fbbf24",
+              color: "#0a0e17",
+              border: "none",
+              borderRadius: 8,
+              padding: "10px 18px",
+              fontSize: 13.5,
+              fontWeight: 600,
+              cursor: uploading ? "wait" : "pointer",
+              opacity: uploading ? 0.7 : 1,
+              transition: "opacity 0.15s",
+            }}
+          >
+            <IconUpload /> {uploading ? "Memproses…" : "Upload TSD"}
+          </button>
+        </div>
         <input
           ref={fileInputRef}
           type="file"
