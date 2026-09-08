@@ -1,3 +1,4 @@
+import html
 import math
 import re
 from pathlib import Path
@@ -274,7 +275,7 @@ def load_paged_text(file_path: str, file_type: str | None = None) -> tuple[int, 
     if ext == "txt":
         return read_txt_pages(file_path)
     if ext == "doc":
-        raise ValueError("Format .doc lama tidak didukung. Unggah ulang sebagai .docx atau PDF.")
+        raise ValueError("Format .doc lama tidak didukung. Unggah ulang sebagai .docx.")
     raise ValueError(f"Tipe file tidak didukung: {ext}")
 
 
@@ -309,8 +310,101 @@ def read_file_text(file_path: str, file_type: str | None = None) -> str:
         _, pages = read_pdf_pages(file_path)
         return "\n".join(text for _, text in pages)
     if ext == "doc":
-        raise ValueError("Format .doc lama tidak didukung. Unggah ulang sebagai .docx atau PDF.")
+        raise ValueError("Format .doc lama tidak didukung. Unggah ulang sebagai .docx.")
     raise ValueError(f"Tipe file tidak didukung: {ext}")
+
+
+def _run_html(run) -> str:
+    text = html.escape(run.text or "")
+    if not text:
+        return ""
+    if run.bold:
+        text = f"<strong>{text}</strong>"
+    if run.italic:
+        text = f"<em>{text}</em>"
+    if run.underline:
+        text = f"<u>{text}</u>"
+    return text
+
+
+def _paragraph_html(paragraph: Paragraph) -> str:
+    inner = "".join(_run_html(run) for run in paragraph.runs).strip()
+    if not inner:
+        inner = html.escape(_paragraph_line(paragraph))
+    if not inner:
+        return ""
+    style = ((paragraph.style.name if paragraph.style else "") or "").lower()
+    if style.startswith("heading 1") or style == "title":
+        return f"<h1>{inner}</h1>"
+    if style.startswith("heading 2") or style == "subtitle":
+        return f"<h2>{inner}</h2>"
+    if style.startswith("heading 3"):
+        return f"<h3>{inner}</h3>"
+    if style.startswith("heading 4"):
+        return f"<h4>{inner}</h4>"
+    if "list number" in style or style.startswith("list number"):
+        return f"<li data-list='ol'>{inner}</li>"
+    if "list" in style:
+        return f"<li data-list='ul'>{inner}</li>"
+    return f"<p>{inner}</p>"
+
+
+def _table_html(table: Table) -> str:
+    rows_html = []
+    for index, row in enumerate(table.rows):
+        cell_tag = "th" if index == 0 else "td"
+        cells = "".join(
+            f"<{cell_tag}>{html.escape(' '.join(cell.text.split()))}</{cell_tag}>"
+            for cell in row.cells
+        )
+        rows_html.append(f"<tr>{cells}</tr>")
+    if not rows_html:
+        return ""
+    return f"<table><tbody>{''.join(rows_html)}</tbody></table>"
+
+
+def _flush_list(items: list[str]) -> str:
+    if not items:
+        return ""
+    numbered = any('data-list="ol"' in item or "data-list='ol'" in item for item in items)
+    tag = "ol" if numbered else "ul"
+    cleaned = [re.sub(r"\sdata-list=['\"][ou]l['\"]", "", item) for item in items]
+    items.clear()
+    return f"<{tag}>{''.join(cleaned)}</{tag}>"
+
+
+def docx_to_html(file_path: str) -> str:
+    document = DocxDocument(file_path)
+    parts: list[str] = []
+    list_items: list[str] = []
+    for block in iter_docx_blocks(document):
+        if isinstance(block, Paragraph):
+            markup = _paragraph_html(block)
+            if markup.startswith("<li"):
+                list_items.append(markup)
+                continue
+            if list_items:
+                parts.append(_flush_list(list_items))
+            if markup:
+                parts.append(markup)
+            continue
+        if list_items:
+            parts.append(_flush_list(list_items))
+        table_markup = _table_html(block)
+        if table_markup:
+            parts.append(table_markup)
+    if list_items:
+        parts.append(_flush_list(list_items))
+    return "".join(parts) or "<p>Dokumen kosong.</p>"
+
+
+def document_to_preview_html(file_path: str, file_type: str | None = None) -> str:
+    ext = (file_type or Path(file_path).suffix.lstrip(".")).lower()
+    if ext == "docx":
+        return docx_to_html(file_path)
+    text = read_file_text(file_path, ext)
+    paragraphs = [f"<p>{html.escape(line)}</p>" for line in text.splitlines() if line.strip()]
+    return "".join(paragraphs) or "<p>Dokumen kosong.</p>"
 
 
 def _normalize_segment(value: str | None) -> str | None:

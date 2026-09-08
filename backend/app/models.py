@@ -67,7 +67,7 @@ class Procedure(db.Model):
             payload["documents"] = [
                 {
                     "id": str(doc.id),
-                    "name": doc.title,
+                    "name": doc.display_name,
                     "documentCode": doc.document_code,
                     "version": doc.version,
                 }
@@ -112,14 +112,20 @@ class Document(db.Model):
         order_by=Procedure.name,
     )
 
+    @property
+    def display_name(self) -> str:
+        name = (self.file_name or self.title or "").strip()
+        return name or "dokumen.docx"
+
     def to_dict(self):
         uploaded = self.upload_at
         if uploaded and uploaded.tzinfo is None:
             uploaded = uploaded.replace(tzinfo=timezone.utc)
         procedure_names = [item.name for item in self.linked_procedures]
+        name = self.display_name
         return {
             "id": str(self.id),
-            "name": self.title,
+            "name": name,
             "size": self.size or 0,
             "type": self.type or "",
             "uploadedAt": uploaded.isoformat() if uploaded else None,
@@ -132,7 +138,7 @@ class Document(db.Model):
             "moduleName": self.module.name if self.module else None,
             "documentCode": self.document_code,
             "version": self.version,
-            "fileName": self.file_name,
+            "fileName": name,
             "description": self.description,
         }
 

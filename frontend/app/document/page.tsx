@@ -2,9 +2,24 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { IconDoc, IconUpload } from "@/components/icons";
+import { isDocxFile, openDocumentInWord } from "@/lib/api";
 import { useDocuments } from "@/lib/documents-provider";
 import { formatDate, formatSize } from "@/lib/format";
 import type { DocItem } from "@/lib/types";
+
+const DOCX_ACCEPT = ".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+const actionButtonStyle = {
+  background: "transparent",
+  border: "1px solid #253048",
+  color: "#8899bb",
+  borderRadius: 6,
+  padding: "4px 8px",
+  fontSize: 11,
+  cursor: "pointer",
+  textDecoration: "none",
+  display: "inline-block",
+} as const;
 
 const selectStyle = {
   background: "#0f1520",
@@ -55,10 +70,17 @@ export default function DocumentPage() {
   const handleFiles = useCallback(
     async (files: FileList | null) => {
       if (!files?.length) return;
-      setUploadError(null);
+      const selected = Array.from(files);
+      const docxFiles = selected.filter(isDocxFile);
+      const skipped = selected.length - docxFiles.length;
+      if (!docxFiles.length) {
+        setUploadError("Hanya file .docx yang bisa diunggah. PDF dan jenis lain dinonaktifkan.");
+        return;
+      }
+      setUploadError(skipped ? `${skipped} file diabaikan karena bukan .docx.` : null);
       setUploading(true);
       try {
-        await upload(files);
+        await upload(docxFiles);
       } catch (err) {
         console.error(err);
         setUploadError(err instanceof Error ? err.message : "Gagal mengunggah dokumen.");
@@ -105,7 +127,7 @@ export default function DocumentPage() {
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf,.docx,.doc,.txt"
+          accept={DOCX_ACCEPT}
           style={{ display: "none" }}
           onChange={(e) => {
             handleFiles(e.target.files);
@@ -151,7 +173,7 @@ export default function DocumentPage() {
         <p style={{ fontSize: 14, color: "#aabbd4", fontWeight: 500 }}>
           Seret & lepas TSD di sini, atau <span style={{ color: "#fbbf24" }}>pilih file</span>
         </p>
-        <p style={{ fontSize: 12, color: "#3a4a66", marginTop: 4 }}>DOCX · PDF · TXT</p>
+        <p style={{ fontSize: 12, color: "#3a4a66", marginTop: 4 }}>Hanya file DOCX</p>
       </div>
 
       {(error || uploadError) && (
@@ -249,16 +271,36 @@ export default function DocumentPage() {
   );
 }
 
-function DocumentCard({ doc, onDelete }: { doc: DocItem; onDelete: (id: string) => Promise<void> }) {
+function DocumentCard({
+  doc,
+  onDelete,
+}: {
+  doc: DocItem;
+  onDelete: (id: string) => Promise<void>;
+}) {
   const [deleting, setDeleting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const busy = deleting;
+
+  const handleOpenWord = () => {
+    setActionError(null);
+    try {
+      openDocumentInWord(doc.id, doc.fileName || doc.name);
+    } catch (err) {
+      console.error(err);
+      setActionError("Tidak bisa membuka Microsoft Word. Pastikan Word terpasang di komputer ini.");
+    }
+  };
 
   const handleDelete = async () => {
-    if (deleting) return;
+    if (busy) return;
+    setActionError(null);
     setDeleting(true);
     try {
       await onDelete(doc.id);
     } catch (err) {
       console.error(err);
+      setActionError(err instanceof Error ? err.message : "Gagal menghapus dokumen.");
       setDeleting(false);
     }
   };
@@ -315,23 +357,22 @@ function DocumentCard({ doc, onDelete }: { doc: DocItem; onDelete: (id: string) 
           {doc.procedures}
         </p>
         <p style={{ fontSize: 11, color: "#3a4a66" }}>prosedur</p>
-        <button
-          type="button"
-          onClick={handleDelete}
-          disabled={deleting}
-          style={{
-            marginTop: 8,
-            background: "transparent",
-            border: "1px solid #253048",
-            color: deleting ? "#3a4a66" : "#8899bb",
-            borderRadius: 6,
-            padding: "4px 8px",
-            fontSize: 11,
-            cursor: deleting ? "wait" : "pointer",
-          }}
-        >
-          {deleting ? "Menghapus…" : "Hapus"}
-        </button>
+        <div className="flex items-center gap-2" style={{ marginTop: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+          <button type="button" onClick={handleOpenWord} style={actionButtonStyle}>
+            Buka di Word
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={busy}
+            style={{ ...actionButtonStyle, cursor: busy ? "wait" : "pointer", opacity: busy ? 0.7 : 1 }}
+          >
+            {deleting ? "Menghapus…" : "Hapus"}
+          </button>
+        </div>
+        {actionError && (
+          <p style={{ color: "#ef4444", fontSize: 11, marginTop: 8, maxWidth: 220 }}>{actionError}</p>
+        )}
       </div>
     </div>
   );

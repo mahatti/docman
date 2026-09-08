@@ -58,7 +58,10 @@ export function Sidebar() {
           NAVIGASI
         </p>
         {NAV.map((item) => {
-          const active = activePath === item.href;
+          const active =
+            item.href === "/document"
+              ? Boolean(activePath?.startsWith("/document"))
+              : activePath === item.href;
           return (
             <Link
               key={item.href}

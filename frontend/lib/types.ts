@@ -36,6 +36,11 @@ export interface DocItem {
   fileName?: string | null;
 }
 
+export interface DocumentPreview extends DocItem {
+  html: string;
+  previewError: string | null;
+}
+
 export interface Source {
   docName: string;
   page: number;

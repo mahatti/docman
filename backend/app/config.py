@@ -16,10 +16,12 @@ def _engine_options() -> dict:
     # A local QueuePool on top of that — plus Flask reloader processes —
     # exhausts the cap. Let the pooler own pooling and close connections
     # after each checkout.
+    connect_args = {"connect_timeout": 15}
     if "pooler.supabase.com" in uri:
         return {
             "poolclass": NullPool,
             "pool_pre_ping": True,
+            "connect_args": connect_args,
         }
     return {
         "pool_size": 5,
@@ -27,6 +29,7 @@ def _engine_options() -> dict:
         "pool_pre_ping": True,
         "pool_recycle": 280,
         "pool_use_lifo": True,
+        "connect_args": connect_args,
     }
 
 
@@ -64,4 +67,4 @@ class Config:
     FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
     UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", str(BASE_DIR / "uploads"))
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024
-    ALLOWED_EXTENSIONS = {"pdf", "docx", "doc", "txt"}
+    ALLOWED_EXTENSIONS = {"docx"}

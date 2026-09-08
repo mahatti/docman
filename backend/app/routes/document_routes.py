@@ -3,6 +3,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request, send_file
 
 from app.service import document_service
+from app.service.word_dav import handle_word_dav
 
 document_bp = Blueprint("documents", __name__)
 
@@ -33,6 +34,14 @@ def get_document(document_id):
     return jsonify({"status": "success", "data": document.to_dict()})
 
 
+@document_bp.get("/<document_id>/preview")
+def preview_document(document_id):
+    payload = document_service.preview_document(document_id)
+    if not payload:
+        return jsonify({"status": "error", "message": "Dokumen tidak ditemukan"}), 404
+    return jsonify({"status": "success", "data": payload})
+
+
 @document_bp.post("")
 def upload_document():
     files = request.files.getlist("files") or request.files.getlist("file")
@@ -55,7 +64,25 @@ def upload_document():
     return jsonify({"status": "success", "data": payload if len(payload) > 1 else payload[0]}), 201
 
 
-@document_bp.get("/<document_id>/file")
+@document_bp.route(
+    "/<document_id>/word/<path:filename>",
+    methods=["OPTIONS", "GET", "HEAD", "PUT", "LOCK", "UNLOCK", "PROPFIND", "PROPPATCH"],
+    provide_automatic_options=False,
+)
+def word_document(document_id, filename):
+    return handle_word_dav(document_id, filename)
+
+
+@document_bp.route(
+    "/<document_id>/file",
+    methods=["OPTIONS", "GET", "HEAD", "PUT", "LOCK", "UNLOCK", "PROPFIND", "PROPPATCH"],
+    provide_automatic_options=False,
+)
+def word_document_alias(document_id):
+    return handle_word_dav(document_id, None)
+
+
+@document_bp.get("/<document_id>/download")
 def download_document(document_id):
     document = document_service.get_document(document_id)
     if not document or not document.file_url:
@@ -64,7 +91,7 @@ def download_document(document_id):
     path = Path(document.file_url)
     if not path.exists():
         return jsonify({"status": "error", "message": "File fisik tidak ditemukan"}), 404
-    return send_file(path, as_attachment=True, download_name=document.file_name or document.title)
+    return send_file(path, as_attachment=True, download_name=document.display_name)
 
 
 @document_bp.delete("/<document_id>")

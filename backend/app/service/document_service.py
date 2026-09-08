@@ -8,6 +8,7 @@ from app import db
 from app.config import Config
 from app.models import Activity, Document, DocumentChunk, Module, Procedure
 from app.service.extract_service import (
+    document_to_preview_html,
     extract_tsd_from_file,
     load_paged_text,
     page_for_content,
@@ -143,6 +144,23 @@ def get_or_create_procedure(name: str) -> Procedure:
     return procedure
 
 
+def _validate_docx(filename: str) -> str:
+    ext = Path(filename or "").suffix.lstrip(".").lower()
+    if ext != "docx":
+        raise ValueError("Hanya file .docx yang didukung. PDF dan jenis lain tidak bisa diunggah.")
+    return ext
+
+
+def _unlink_quietly(path: Path | None) -> None:
+    if not path:
+        return
+    try:
+        if path.exists():
+            path.unlink()
+    except OSError:
+        pass
+
+
 def apply_tsd_metadata(document: Document, metadata: dict) -> None:
     module = get_or_create_module(metadata.get("module_name"))
     document.module_id = module.id
@@ -150,8 +168,6 @@ def apply_tsd_metadata(document: Document, metadata: dict) -> None:
         document.document_code = metadata["document_code"]
     if metadata.get("version"):
         document.version = metadata["version"]
-    if metadata.get("title"):
-        document.title = metadata["title"]
     if metadata.get("tags"):
         document.tags = metadata["tags"]
     if metadata.get("tables"):
@@ -170,10 +186,10 @@ def apply_tsd_metadata(document: Document, metadata: dict) -> None:
 
 
 def save_upload(file_storage, module_id=None) -> Document:
-    original_name = file_storage.filename or "dokumen"
-    ext = Path(original_name).suffix.lstrip(".").lower()
-    if ext not in Config.ALLOWED_EXTENSIONS:
-        raise ValueError("Tipe file tidak didukung. Gunakan PDF, DOCX, atau TXT.")
+    original_name = Path(file_storage.filename or "dokumen.docx").name
+    if not original_name.lower().endswith(".docx"):
+        original_name = f"{original_name}.docx"
+    ext = _validate_docx(original_name)
 
     parsed_module_id = parse_id(module_id)
     module = db.session.get(Module, parsed_module_id) if parsed_module_id else default_module()
@@ -220,12 +236,33 @@ def save_upload(file_storage, module_id=None) -> Document:
     return document
 
 
+def preview_document(document_id) -> dict | None:
+    document = get_document(document_id)
+    if not document:
+        return None
+    html = ""
+    error = None
+    if document.file_url and Path(document.file_url).exists():
+        try:
+            html = document_to_preview_html(document.file_url, document.type)
+        except Exception as exc:
+            error = str(exc)
+    else:
+        error = "File fisik tidak ditemukan"
+    payload = document.to_dict()
+    payload["html"] = html
+    payload["previewError"] = error
+    return payload
+
+
 def _process_document(document: Document):
     from app.service.rag_service import ingest_document
 
     ingest_document(document)
     metadata = extract_tsd_from_file(document.file_url, document.type, document.file_name or document.title)
     apply_tsd_metadata(document, metadata)
+    if document.file_name:
+        document.title = document.file_name
 
 
 def repair_stored_page_numbers() -> None:
@@ -317,7 +354,7 @@ def delete_document(document_id) -> bool:
     if not document:
         return False
 
-    title = document.title
+    title = document.display_name
     file_url = document.file_url
 
     try:
@@ -331,12 +368,7 @@ def delete_document(document_id) -> bool:
         raise
 
     if file_url:
-        path = Path(file_url)
-        try:
-            if path.exists():
-                path.unlink()
-        except OSError:
-            pass
+        _unlink_quietly(Path(file_url))
     return True
 
 

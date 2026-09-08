@@ -1,7 +1,7 @@
 import atexit
 import os
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event
@@ -45,7 +45,17 @@ def create_app():
             )
         ),
         supports_credentials=True,
+        methods=["GET", "HEAD", "POST", "DELETE", "OPTIONS", "PROPFIND"],
+        expose_headers=["DAV", "ETag", "Allow"],
+        allow_headers="*",
     )
+
+    @app.after_request
+    def _office_dav_headers(response):
+        path = request.path or ""
+        if "/api/documents/" in path and ("/word/" in path or path.rstrip("/").endswith("/file")):
+            response.headers.setdefault("DAV", "1")
+        return response
 
     from app.routes.dashboard_routes import dashboard_bp
     from app.routes.document_routes import document_bp

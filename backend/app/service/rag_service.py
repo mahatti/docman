@@ -104,7 +104,7 @@ def load_file(file_path: str, file_type: str, doc_name: str) -> tuple[int, list[
 
 
 def ingest_document(document: Document) -> None:
-    total_pages, raw_docs = load_file(document.file_url, document.type, document.title)
+    total_pages, raw_docs = load_file(document.file_url, document.type, document.display_name)
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=Config.CHUNK_SIZE,
         chunk_overlap=Config.CHUNK_OVERLAP,
@@ -171,7 +171,7 @@ class DocManVectorRetriever(BaseRetriever):
                 chunks.append(chunk)
         results = []
         for chunk in chunks:
-            doc_name = chunk.document.title if chunk.document else "Dokumen"
+            doc_name = chunk.document.display_name if chunk.document else "Dokumen"
             results.append(
                 LCDocument(
                     page_content=chunk.content,
@@ -214,14 +214,14 @@ def _catalog_context_docs(question: str, document_id: int | None) -> list[LCDocu
         documents = mentioned
     docs = []
     for document in documents:
-        text = format_table_catalog(document.table_catalog, question, document.title)
+        text = format_table_catalog(document.table_catalog, question, document.display_name)
         if not text:
             continue
         docs.append(
             LCDocument(
                 page_content=text,
                 metadata={
-                    "doc_name": document.title,
+                    "doc_name": document.display_name,
                     "page": "katalog",
                     "document_id": document.id,
                     "catalog": True,

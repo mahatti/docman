@@ -1,4 +1,4 @@
-import type { ActivityItem, ChatMessage, DashboardSummary, DocItem, DocumentFilters, Source } from "./types";
+import type { ActivityItem, ChatMessage, DashboardSummary, DocItem, DocumentFilters, DocumentPreview, Source } from "./types";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
 
@@ -24,6 +24,8 @@ interface ApiDocument {
   documentCode: string | null;
   version: string | null;
   fileName?: string | null;
+  html?: string;
+  previewError?: string | null;
 }
 
 interface ApiChatMessage {
@@ -66,7 +68,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     payload = (await response.json()) as ApiEnvelope<T>;
   } catch {
     throw new Error(
-      response.ok ? "Respons server tidak valid." : "Backend tidak merespons. Pastikan Flask berjalan di port 5000.",
+      response.ok
+        ? "Respons server tidak valid."
+        : "Backend tidak merespons. Pastikan Flask berjalan di port 5000.",
     );
   }
 
@@ -126,6 +130,47 @@ export async function fetchDocumentFilters(): Promise<DocumentFilters> {
   return request<DocumentFilters>("/api/documents/filters");
 }
 
+export function isDocxFile(file: File) {
+  return file.name.toLowerCase().endsWith(".docx");
+}
+
+export function backendOrigin() {
+  const fromEnv = (process.env.NEXT_PUBLIC_BACKEND_URL || "").replace(/\/$/, "");
+  if (fromEnv) return fromEnv;
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:5000`;
+  }
+  return "http://127.0.0.1:5000";
+}
+
+export function documentFileUrl(documentId: string) {
+  return `${API_BASE}/api/documents/${documentId}/download`;
+}
+
+export function wordFileName(fileName?: string | null) {
+  const raw = (fileName || "document.docx").trim();
+  const base = raw.split(/[/\\]/).pop()?.trim() || "document.docx";
+  return /\.docx$/i.test(base) ? base : `${base}.docx`;
+}
+
+export function documentWordUrl(documentId: string, fileName?: string | null) {
+  return `${backendOrigin()}/api/documents/${documentId}/word/${encodeURIComponent(wordFileName(fileName))}`;
+}
+
+export async function fetchDocument(documentId: string): Promise<DocItem> {
+  const data = await request<ApiDocument>(`/api/documents/${documentId}`);
+  return mapDocument(data);
+}
+
+export async function openDocumentInWord(documentId: string, fileName?: string | null) {
+  let name = fileName;
+  if (!name) {
+    const doc = await fetchDocument(documentId);
+    name = doc.fileName || doc.name;
+  }
+  window.location.href = `ms-word:ofv|u|${documentWordUrl(documentId, name)}`;
+}
+
 export async function uploadDocuments(files: FileList | File[]): Promise<DocItem[]> {
   const form = new FormData();
   Array.from(files).forEach((file) => form.append("files", file));
@@ -135,6 +180,15 @@ export async function uploadDocuments(files: FileList | File[]): Promise<DocItem
   });
   const items = Array.isArray(data) ? data : [data];
   return items.map(mapDocument);
+}
+
+export async function fetchDocumentPreview(documentId: string): Promise<DocumentPreview> {
+  const data = await request<ApiDocument>(`/api/documents/${documentId}/preview`);
+  return {
+    ...mapDocument(data),
+    html: data.html || "",
+    previewError: data.previewError || null,
+  };
 }
 
 export async function deleteDocument(documentId: string): Promise<void> {

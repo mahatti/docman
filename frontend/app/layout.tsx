@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: {
     default: "DocMan",
-    template: "%s · DocQuery",
+    template: "%s · DocMan",
   },
   description: "Repository dokumen dan tanya jawab berbasis dokumen",
 };
