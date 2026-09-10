@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { IconSend, IconTrash } from "@/components/icons";
+import { IconCheck, IconCopy, IconSend, IconTrash } from "@/components/icons";
 import { askQuestion, clearChatHistory, fetchMessages } from "@/lib/api";
 import { useDocuments } from "@/lib/documents-provider";
 import type { ChatMessage } from "@/lib/types";
@@ -10,8 +10,14 @@ function formatMessageHtml(content: string) {
   return content.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br/>");
 }
 
+function isUnavailableInDocumentContext(content: string) {
+  return /informasi tidak (tersedia|ada|ditemukan|terdapat).{0,40}(konteks|dokumen yang (diberikan|dipilih))|tidak (tersedia|ada|ditemukan|terdapat) (dalam|di|pada) (konteks|dokumen yang (diberikan|dipilih))|di luar konteks dokumen|bukan bagian dari konteks dokumen/i.test(
+    content,
+  );
+}
+
 export default function QnaPage() {
-  const { docs } = useDocuments();
+  const { docs, loading: docsLoading, error: docsError } = useDocuments();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -19,7 +25,11 @@ export default function QnaPage() {
   const [confirmClear, setConfirmClear] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<string>("all");
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const copiedTimerRef = useRef<number | null>(null);
+  const readyDocs = docs.filter((doc) => doc.status === "ready");
+  const selectedDocument = readyDocs.find((doc) => doc.id === selectedDoc) ?? null;
 
   useEffect(() => {
     let active = true;
@@ -36,8 +46,62 @@ export default function QnaPage() {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) window.clearTimeout(copiedTimerRef.current);
+    };
+  }, []);
+
+  const isAllDocuments = selectedDoc === "all";
+  const canAsk = isAllDocuments ? readyDocs.length > 0 : Boolean(selectedDocument);
+
+  useEffect(() => {
+    if (selectedDoc === "all") return;
+    if (!docs.some((doc) => doc.id === selectedDoc && doc.status === "ready")) {
+      setSelectedDoc("all");
+    }
+  }, [docs, selectedDoc]);
+
+  const copyAnswer = async (key: string, content: string) => {
+    const text = content.trim();
+    if (!text) return;
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      copied = document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    if (!copied) {
+      console.error("Gagal menyalin jawaban");
+      return;
+    }
+    setCopiedKey(key);
+    if (copiedTimerRef.current) window.clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = window.setTimeout(() => {
+      setCopiedKey((current) => (current === key ? null : current));
+      copiedTimerRef.current = null;
+    }, 1600);
+  };
+
   const send = async () => {
     if (!input.trim() || loading) return;
+    if (!canAsk) {
+      setError(
+        readyDocs.length === 0
+          ? "Belum ada dokumen siap untuk Q&A."
+          : "Pilih lingkup dokumen di panel kanan.",
+      );
+      return;
+    }
     setError(null);
     const question = input.trim();
     const userMsg: ChatMessage = { role: "user", content: question, timestamp: new Date() };
@@ -85,10 +149,22 @@ export default function QnaPage() {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <div style={{ padding: "24px 32px 16px", borderBottom: "1px solid #1a2235", flexShrink: 0 }}>
           <div className="flex items-start justify-between gap-4">
-            <div>
+            <div style={{ minWidth: 0, flex: 1 }}>
               <h1 style={{ fontFamily: "DM Serif Display, serif", fontSize: 24, color: "#e8edf5" }}>Tanya Jawab Dokumen</h1>
-              <p style={{ fontSize: 13, color: "#8899bb" }}>
-                Ajukan pertanyaan tentang dokumen Anda — sistem akan mencari jawaban dari dokumen Anda
+              <p
+                title={selectedDocument?.name}
+                style={{
+                  fontSize: 13,
+                  color: "#8899bb",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  maxWidth: 560,
+                }}
+              >
+                {selectedDocument
+                  ? `Lingkup: ${selectedDocument.name} — jawaban hanya dari dokumen ini`
+                  : "Lingkup: semua dokumen — jawaban memakai sumber dari seluruh dokumen"}
               </p>
             </div>
             <button
@@ -117,8 +193,11 @@ export default function QnaPage() {
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }} className="flex flex-col gap-5">
-          {messages.map((msg, i) => (
-            <div key={`${msg.id ?? "local"}-${msg.timestamp.getTime()}-${i}`} style={{ display: "flex", gap: 12, flexDirection: msg.role === "user" ? "row-reverse" : "row" }}>
+          {messages.map((msg, i) => {
+            const messageKey = `${msg.id ?? "local"}-${msg.timestamp.getTime()}-${i}`;
+            const copied = copiedKey === messageKey;
+            return (
+            <div key={messageKey} style={{ display: "flex", gap: 12, flexDirection: msg.role === "user" ? "row-reverse" : "row" }}>
               <div
                 style={{
                   width: 32,
@@ -161,7 +240,7 @@ export default function QnaPage() {
                   />
                 </div>
 
-                {msg.sources && msg.sources.length > 0 && (
+                {msg.sources && msg.sources.length > 0 && !isUnavailableInDocumentContext(msg.content) && (
                   <div className="mt-2 flex flex-col gap-1">
                     {msg.sources.map((src) => (
                       <div
@@ -181,7 +260,18 @@ export default function QnaPage() {
                               d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
                             />
                           </svg>
-                          <span style={{ fontSize: 11, color: "#fbbf24", fontFamily: "JetBrains Mono, monospace" }}>
+                          <span
+                            title={src.docName}
+                            style={{
+                              fontSize: 11,
+                              color: "#fbbf24",
+                              fontFamily: "JetBrains Mono, monospace",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              minWidth: 0,
+                            }}
+                          >
                             {src.docName} · hal. {src.page}
                           </span>
                         </div>
@@ -191,12 +281,41 @@ export default function QnaPage() {
                   </div>
                 )}
 
-                <p style={{ fontSize: 10.5, color: "#3a4a66", marginTop: 4, fontFamily: "JetBrains Mono, monospace" }}>
-                  {msg.timestamp.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
-                </p>
+                <div
+                  className="flex items-center gap-2"
+                  style={{ marginTop: 4, justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}
+                >
+                  <p style={{ fontSize: 10.5, color: "#3a4a66", fontFamily: "JetBrains Mono, monospace" }}>
+                    {msg.timestamp.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                  {msg.role === "assistant" && (
+                    <button
+                      type="button"
+                      title={copied ? "Disalin" : "Salin jawaban"}
+                      aria-label={copied ? "Disalin" : "Salin jawaban"}
+                      onClick={() => void copyAnswer(messageKey, msg.content)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 22,
+                        height: 22,
+                        padding: 0,
+                        background: "transparent",
+                        border: "none",
+                        borderRadius: 6,
+                        color: copied ? "#34d399" : "#8899bb",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {copied ? <IconCheck /> : <IconCopy />}
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
-          ))}
+            );
+          })}
 
           {loading && (
             <div className="flex gap-3">
@@ -294,7 +413,11 @@ export default function QnaPage() {
                   send();
                 }
               }}
-              placeholder="Ketik pertanyaan tentang dokumen"
+              placeholder={
+                selectedDocument
+                  ? `Ketik pertanyaan tentang ${selectedDocument.name}`
+                  : "Ketik pertanyaan tentang semua dokumen"
+              }
               rows={1}
               style={{
                 flex: 1,
@@ -310,15 +433,15 @@ export default function QnaPage() {
             />
             <button
               onClick={send}
-              disabled={!input.trim() || loading}
+              disabled={!input.trim() || loading || !canAsk}
               style={{
                 width: 36,
                 height: 36,
                 borderRadius: 8,
-                background: input.trim() && !loading ? "#fbbf24" : "#1a2235",
+                background: input.trim() && !loading && canAsk ? "#fbbf24" : "#1a2235",
                 border: "none",
-                cursor: input.trim() && !loading ? "pointer" : "default",
-                color: input.trim() && !loading ? "#0a0e17" : "#3a4a66",
+                cursor: input.trim() && !loading && canAsk ? "pointer" : "default",
+                color: input.trim() && !loading && canAsk ? "#0a0e17" : "#3a4a66",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -330,8 +453,21 @@ export default function QnaPage() {
               <IconSend />
             </button>
           </div>
-          <p style={{ fontSize: 11, color: "#3a4a66", marginTop: 6, textAlign: "center" }}>
-            Jawaban dihasilkan dari konten dokumen yang terupload · Selalu verifikasi informasi penting
+          <p
+            title={selectedDocument?.name}
+            style={{
+              fontSize: 11,
+              color: "#3a4a66",
+              marginTop: 6,
+              textAlign: "center",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {selectedDocument
+              ? `Jawaban hanya dari ${selectedDocument.name} · Selalu verifikasi informasi penting`
+              : "Jawaban dihasilkan dari semua dokumen yang terupload · Selalu verifikasi informasi penting"}
           </p>
         </div>
       </div>
@@ -355,9 +491,17 @@ export default function QnaPage() {
             marginBottom: 12,
           }}
         >
-          SUMBER DOKUMEN
+          LINGKUP DOKUMEN
         </p>
+        <p style={{ fontSize: 11.5, color: "#5a6b88", lineHeight: 1.5, marginBottom: 10 }}>
+          Pilih semua dokumen, atau satu dokumen tertentu.
+        </p>
+        {docsError && (
+          <p style={{ fontSize: 12, color: "#ef4444", lineHeight: 1.5, marginBottom: 10 }}>{docsError}</p>
+        )}
         <button
+          type="button"
+          title="Semua dokumen"
           onClick={() => setSelectedDoc("all")}
           style={{
             width: "100%",
@@ -365,8 +509,8 @@ export default function QnaPage() {
             padding: "8px 10px",
             borderRadius: 8,
             border: "none",
-            background: selectedDoc === "all" ? "#1a2235" : "transparent",
-            color: selectedDoc === "all" ? "#fbbf24" : "#8899bb",
+            background: isAllDocuments ? "#1a2235" : "transparent",
+            color: isAllDocuments ? "#fbbf24" : "#8899bb",
             fontSize: 13,
             cursor: "pointer",
             marginBottom: 6,
@@ -374,9 +518,14 @@ export default function QnaPage() {
         >
           Semua Dokumen
         </button>
-        {docs.map((doc) => (
+        {docsLoading ? (
+          <p style={{ fontSize: 12, color: "#3a4a66", lineHeight: 1.5 }}>Memuat dokumen…</p>
+        ) : (
+          readyDocs.map((doc) => (
           <button
             key={doc.id}
+            type="button"
+            title={doc.name}
             onClick={() => setSelectedDoc(doc.id)}
             style={{
               width: "100%",
@@ -390,11 +539,18 @@ export default function QnaPage() {
               cursor: "pointer",
               marginBottom: 4,
               lineHeight: 1.4,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
             }}
           >
-            {doc.name.length > 26 ? doc.name.slice(0, 26) + "…" : doc.name}
+            {doc.name}
           </button>
-        ))}
+          ))
+        )}
+        {!docsLoading && readyDocs.length === 0 && !docsError && (
+          <p style={{ fontSize: 12, color: "#3a4a66", lineHeight: 1.5 }}>Belum ada dokumen siap untuk Q&A.</p>
+        )}
       </div>
     </div>
 

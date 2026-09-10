@@ -4,7 +4,6 @@ import re
 import warnings
 
 import requests
-from sympy import python
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.documents import Document as LCDocument
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
@@ -26,17 +25,38 @@ from app.service.extract_service import (
     table_question_role,
 )
 
-SYSTEM_PROMPT = ( 
-    "Anda adalah asisten DocMan. Jawab hanya berdasarkan konteks dokumen. " 
-    "Gunakan bahasa Indonesia yang jelas. Jika informasi tidak ada di konteks, gunakan pehamaman dan penjelasan yang sesuai. " 
-    "Sebutkan nama dokumen dan halaman jika relevan. Format poin penting dengan markdown **tebal**.\n" 
-    "Jika pertanyaan tentang tabel, bedakan dengan ketat:\n" 
-    "- Tabel sumber = bagian Table Source / 3.b.1 Table Source.\n" 
-    "- Tabel target = bagian Target Table / Table Target / 3.b.3 Table Target.\n" 
-    "- Jangan mencampur sumber dan target. Jangan mengisi dari Data Models atau daftar kolom " 
-    "kecuali nama tabel itu muncul di bagian Source/Target.\n" 
-    "- Jika ada katalog tabel di konteks, utamakan katalog itu.\n\n" "{context}"
+TABLE_RULES = (
+    "Jika pertanyaan tentang tabel, bedakan dengan ketat:\n"
+    "- Tabel sumber = bagian Table Source / 3.b.1 Table Source.\n"
+    "- Tabel target = bagian Target Table / Table Target / 3.b.3 Table Target.\n"
+    "- Jangan mencampur sumber dan target. Jangan mengisi dari Data Models atau daftar kolom "
+    "kecuali nama tabel itu muncul di bagian Source/Target.\n"
+    "- Jika ada katalog tabel di konteks, utamakan katalog itu.\n"
 )
+
+
+def _system_prompt(document_name: str | None = None) -> str:
+    if document_name:
+        scope = (
+            f'Konteks ini HANYA dari dokumen "{document_name}". '
+            "Jangan memakai atau mencampur informasi dari dokumen lain. "
+            "Jika informasi tidak tersedia dalam dokumen yang dipilih, katakan demikian dan jangan merujuk halaman. "
+        )
+    else:
+        scope = (
+            "Konteks bisa berasal dari beberapa dokumen. "
+            "Sebutkan nama dokumen sumber jika relevan. "
+            "Jika informasi tidak tersedia dalam konteks dokumen yang diberikan, katakan demikian dan jangan merujuk halaman. "
+        )
+    return (
+        "Anda adalah asisten DocMan. Jawab hanya berdasarkan konteks dokumen. "
+        + scope
+        + "Gunakan bahasa Indonesia yang jelas. "
+        "Sebutkan nama dokumen dan halaman jika relevan. "
+        "Format poin penting dengan markdown **tebal**.\n"
+        + TABLE_RULES
+        + "\n{context}"
+    )
                  
 
 
@@ -242,11 +262,29 @@ def _table_search_terms(question: str) -> list[str]:
     return []
 
 
+UNAVAILABLE_IN_CONTEXT_RE = re.compile(
+    r"(informasi tidak (tersedia|ada|ditemukan|terdapat).{0,40}(konteks|dokumen yang (diberikan|dipilih))"
+    r"|tidak (tersedia|ada|ditemukan|terdapat) (dalam|di|pada) (konteks|dokumen yang (diberikan|dipilih))"
+    r"|di luar konteks dokumen"
+    r"|bukan bagian dari konteks dokumen)",
+    re.IGNORECASE,
+)
+
+
+def answer_lacks_document_context(answer: str) -> bool:
+    return bool(UNAVAILABLE_IN_CONTEXT_RE.search(answer or ""))
+
+
 def answer_question(question: str, document_id: int | None = None) -> tuple[str, list[dict]]:
-    ready = Document.query.filter_by(status="ready").count()
+    scoped_document = None
     if document_id:
-        ready = Document.query.filter_by(status="ready", id=document_id).count()
-    if not ready:
+        scoped_document = Document.query.filter_by(status="ready", id=document_id).first()
+        if not scoped_document:
+            return (
+                "Dokumen yang dipilih belum siap atau tidak ditemukan. Pilih dokumen lain, lalu tanyakan lagi.",
+                [],
+            )
+    elif not Document.query.filter_by(status="ready").count():
         return (
             "Belum ada dokumen siap yang bisa dipakai untuk menjawab. Unggah dokumen terlebih dahulu, lalu tanyakan lagi.",
             [],
@@ -257,7 +295,7 @@ def answer_question(question: str, document_id: int | None = None) -> tuple[str,
     retriever = DocManVectorRetriever(document_id=document_id, k=retrieve_k, extra_terms=terms)
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", SYSTEM_PROMPT),
+            ("system", _system_prompt(scoped_document.display_name if scoped_document else None)),
             ("human", "{input}"),
         ]
     )
@@ -267,6 +305,12 @@ def answer_question(question: str, document_id: int | None = None) -> tuple[str,
         document_prompt=DOCUMENT_PROMPT,
     )
     retrieved = retriever.invoke(question)
+    if document_id:
+        retrieved = [
+            item
+            for item in retrieved
+            if int(item.metadata.get("document_id") or 0) == document_id
+        ]
     catalog_docs = _catalog_context_docs(question, document_id) if terms else []
     context_docs = catalog_docs + list(retrieved)
     db.session.remove()
@@ -287,4 +331,6 @@ def answer_question(question: str, document_id: int | None = None) -> tuple[str,
         sources.append({"docName": doc_name, "page": page, "excerpt": excerpt})
         if len(sources) >= 4:
             break
+    if answer_lacks_document_context(answer):
+        return answer, []
     return answer, sources

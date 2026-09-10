@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IconDoc, IconDownload, IconUpload } from "@/components/icons";
-import { isDocxFile, openDocumentInWord } from "@/lib/api";
+import { documentFileUrl, isDocxFile, openDocumentInWord, wordFileName } from "@/lib/api";
 import { useDocuments } from "@/lib/documents-provider";
 import { formatDate, formatSize } from "@/lib/format";
 import type { DocItem } from "@/lib/types";
@@ -303,6 +303,7 @@ function DocumentCard({
   onDelete: (id: string) => Promise<void>;
 }) {
   const [deleting, setDeleting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const busy = deleting;
 
@@ -315,6 +316,20 @@ function DocumentCard({
       setActionError("Tidak bisa membuka Microsoft Word. Pastikan Word terpasang di komputer ini.");
     }
   };
+
+  const handleCancelDelete = () => {
+    if (busy) return;
+    setConfirming(false);
+  };
+
+  useEffect(() => {
+    if (!confirming) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !deleting) setConfirming(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [confirming, deleting]);
 
   const handleDelete = async () => {
     if (busy) return;
@@ -383,21 +398,108 @@ function DocumentCard({
         <p style={{ fontSize: 11, color: "#3a4a66" }}>prosedur</p>
         <div className="flex items-center gap-2" style={{ marginTop: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <button type="button" onClick={handleOpenWord} style={actionButtonStyle}>
-            Buka di Word
+            Buka
           </button>
+          <a
+            href={documentFileUrl(doc.id)}
+            download={wordFileName(doc.fileName || doc.name)}
+            style={actionButtonStyle}
+          >
+            Unduh
+          </a>
           <button
             type="button"
-            onClick={handleDelete}
+            onClick={() => {
+              setActionError(null);
+              setConfirming(true);
+            }}
             disabled={busy}
             style={{ ...actionButtonStyle, cursor: busy ? "wait" : "pointer", opacity: busy ? 0.7 : 1 }}
           >
-            {deleting ? "Menghapus…" : "Hapus"}
+            Hapus
           </button>
         </div>
-        {actionError && (
+        {actionError && !confirming && (
           <p style={{ color: "#ef4444", fontSize: 11, marginTop: 8, maxWidth: 220 }}>{actionError}</p>
         )}
       </div>
+      {confirming && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={`delete-doc-title-${doc.id}`}
+          onClick={handleCancelDelete}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(10, 14, 23, 0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+            padding: 24,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 380,
+              background: "#0f1520",
+              border: "1px solid #253048",
+              borderRadius: 12,
+              padding: "22px 24px",
+            }}
+          >
+            <h2
+              id={`delete-doc-title-${doc.id}`}
+              style={{ fontFamily: "DM Serif Display, serif", fontSize: 20, color: "#e8edf5", marginBottom: 8 }}
+            >
+              Hapus dokumen?
+            </h2>
+            <p style={{ fontSize: 13, color: "#8899bb", lineHeight: 1.6, marginBottom: 20 }}>
+              <span style={{ color: "#e8edf5" }}>{doc.name}</span> akan dihapus. Tindakan ini tidak dapat dibatalkan.
+            </p>
+            {actionError && (
+              <p style={{ color: "#ef4444", fontSize: 12, marginBottom: 16 }}>{actionError}</p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCancelDelete}
+                disabled={busy}
+                style={{
+                  background: "transparent",
+                  border: "1px solid #253048",
+                  color: "#8899bb",
+                  borderRadius: 8,
+                  padding: "8px 14px",
+                  fontSize: 13,
+                  cursor: busy ? "default" : "pointer",
+                }}
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={busy}
+                style={{
+                  background: "#ef4444",
+                  border: "none",
+                  color: "#fff",
+                  borderRadius: 8,
+                  padding: "8px 14px",
+                  fontSize: 13,
+                  cursor: busy ? "wait" : "pointer",
+                }}
+              >
+                {deleting ? "Menghapus…" : "Hapus dokumen"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
