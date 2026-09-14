@@ -71,7 +71,11 @@ def create_app():
 
     @app.get("/api/health")
     def health():
-        return jsonify({"status": "success", "message": "DocMan API is running"})
+        return jsonify({
+            "status": "success",
+            "message": "DocMan API is running",
+            "ooSaveFix": "v3-soft-success",
+        })
 
     @app.errorhandler(413)
     def too_large(_error):

@@ -256,10 +256,21 @@ def preview_document(document_id) -> dict | None:
 
 
 def _process_document(document: Document):
+    doc_id = document.id
+    file_url = document.file_url
+    doc_type = document.type
+    file_name = document.file_name or document.title
+
     from app.service.rag_service import ingest_document
 
-    ingest_document(document)
-    metadata = extract_tsd_from_file(document.file_url, document.type, document.file_name or document.title)
+    ingest_document(doc_id)
+
+    db.session.remove()
+    document = db.session.get(Document, doc_id)
+    if document is None:
+        raise ValueError("Dokumen tidak ditemukan setelah ingest")
+
+    metadata = extract_tsd_from_file(file_url, doc_type, file_name)
     apply_tsd_metadata(document, metadata)
     if document.file_name:
         document.title = document.file_name

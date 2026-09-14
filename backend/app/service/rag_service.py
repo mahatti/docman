@@ -123,8 +123,17 @@ def load_file(file_path: str, file_type: str, doc_name: str) -> tuple[int, list[
     ]
 
 
-def ingest_document(document: Document) -> None:
-    total_pages, raw_docs = load_file(document.file_url, document.type, document.display_name)
+def ingest_document(document_id: int) -> None:
+    document = db.session.get(Document, document_id)
+    if document is None:
+        raise ValueError("Dokumen tidak ditemukan saat ingest")
+
+    doc_id = document.id
+    file_url = document.file_url
+    doc_type = document.type
+    doc_name = document.display_name
+
+    total_pages, raw_docs = load_file(file_url, doc_type, doc_name)
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=Config.CHUNK_SIZE,
         chunk_overlap=Config.CHUNK_OVERLAP,
@@ -134,14 +143,16 @@ def ingest_document(document: Document) -> None:
     if not splits:
         raise ValueError("Tidak ada teks yang bisa diekstrak dari dokumen.")
 
+    # Long network call — drop the session so the ORM instance cannot go stale.
     embeddings = get_embeddings().embed_documents([item.page_content for item in splits])
-    DocumentChunk.query.filter_by(document_id=document.id).delete()
+    db.session.remove()
 
+    DocumentChunk.query.filter_by(document_id=doc_id).delete(synchronize_session=False)
     for index, (split, vector) in enumerate(zip(splits, embeddings)):
         page = int(split.metadata.get("page") or 1)
         db.session.add(
             DocumentChunk(
-                document_id=document.id,
+                document_id=doc_id,
                 page=max(page, 1),
                 chunk_index=index,
                 content=split.page_content.strip(),
@@ -149,8 +160,11 @@ def ingest_document(document: Document) -> None:
             )
         )
 
+    document = db.session.get(Document, doc_id)
+    if document is None:
+        raise ValueError("Dokumen tidak ditemukan saat ingest")
     document.pages = total_pages
-    document.procedures = count_procedures("\n".join(item.page_content for item in splits))
+    document.procedure_count = count_procedures("\n".join(item.page_content for item in splits))
 
 
 class DocManVectorRetriever(BaseRetriever):

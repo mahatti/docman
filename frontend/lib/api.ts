@@ -199,6 +199,36 @@ export async function deleteDocument(documentId: string): Promise<void> {
   });
 }
 
+export interface OnlyOfficeEditorPayload {
+  documentServerUrl: string;
+  documentId: string;
+  documentName: string;
+  documentKey: string;
+  config: Record<string, unknown>;
+}
+
+export async function fetchOnlyOfficeConfig(documentId: string): Promise<OnlyOfficeEditorPayload> {
+  return request<OnlyOfficeEditorPayload>(`/api/documents/${documentId}/onlyoffice/config`);
+}
+
+export interface OnlyOfficeForceSaveResult {
+  error: number;
+  key?: string;
+  message?: string;
+  document?: ApiDocument | null;
+}
+
+export async function forceSaveOnlyOfficeDocument(
+  documentId: string,
+  documentKey?: string,
+): Promise<OnlyOfficeForceSaveResult> {
+  return request<OnlyOfficeForceSaveResult>(`/api/documents/${documentId}/onlyoffice/forcesave`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(documentKey ? { key: documentKey } : {}),
+  });
+}
+
 export async function fetchDashboard(): Promise<DashboardSummary> {
   const data = await request<ApiDashboard>("/api/dashboard");
   return {

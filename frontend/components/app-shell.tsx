@@ -9,11 +9,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (pathname === "/") return children;
 
   const isQa = pathname === "/qna";
+  const isEditor = Boolean(pathname?.match(/^\/document\/[^/]+\/edit\/?$/));
+  const fillViewport = isQa || isEditor;
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#0a0e17" }}>
       <Sidebar />
-      <main style={{ flex: 1, overflowY: isQa ? "hidden" : "auto", minWidth: 0 }}>{children}</main>
+      <main style={{ flex: 1, overflowY: fillViewport ? "hidden" : "auto", minWidth: 0, height: fillViewport ? "100vh" : undefined }}>
+        {children}
+      </main>
     </div>
   );
 }

@@ -68,3 +68,8 @@ class Config:
     UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", str(BASE_DIR / "uploads"))
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024
     ALLOWED_EXTENSIONS = {"docx"}
+
+    # ONLYOFFICE Document Server — Document Server must be able to reach BACKEND_PUBLIC_URL
+    ONLYOFFICE_URL = os.getenv("ONLYOFFICE_URL", "http://localhost:8080").rstrip("/")
+    ONLYOFFICE_JWT_SECRET = os.getenv("ONLYOFFICE_JWT_SECRET", "").strip()
+    BACKEND_PUBLIC_URL = os.getenv("BACKEND_PUBLIC_URL", "http://127.0.0.1:5000").rstrip("/")

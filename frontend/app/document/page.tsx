@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IconDoc, IconDownload, IconUpload } from "@/components/icons";
 import { documentFileUrl, isDocxFile, openDocumentInWord, wordFileName } from "@/lib/api";
@@ -306,6 +307,7 @@ function DocumentCard({
   const [confirming, setConfirming] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const busy = deleting;
+  const canEdit = doc.status === "ready" && (doc.type === "docx" || /\.docx$/i.test(doc.fileName || doc.name));
 
   const handleOpenWord = () => {
     setActionError(null);
@@ -397,9 +399,30 @@ function DocumentCard({
         </p>
         <p style={{ fontSize: 11, color: "#3a4a66" }}>prosedur</p>
         <div className="flex items-center gap-2" style={{ marginTop: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-          <button type="button" onClick={handleOpenWord} style={actionButtonStyle}>
-            Buka
-          </button>
+          <Link
+            href={`/document/${doc.id}/edit`}
+            style={{
+              ...actionButtonStyle,
+              pointerEvents: canEdit ? "auto" : "none",
+              opacity: canEdit ? 1 : 0.45,
+              cursor: canEdit ? "pointer" : "not-allowed",
+              color: canEdit ? "#fbbf24" : "#8899bb",
+              borderColor: canEdit ? "#3a4a20" : "#253048",
+            }}
+            aria-disabled={!canEdit}
+            title={
+              canEdit
+                ? "Edit dokumen di ONLYOFFICE Docs"
+                : doc.status === "processing"
+                  ? "Dokumen masih diproses"
+                  : "Dokumen belum siap untuk diedit"
+            }
+            onClick={(e) => {
+              if (!canEdit) e.preventDefault();
+            }}
+          >
+            Edit Dokumen
+          </Link>
           <a
             href={documentFileUrl(doc.id)}
             download={wordFileName(doc.fileName || doc.name)}

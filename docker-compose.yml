@@ -1,0 +1,33 @@
+services:
+  onlyoffice:
+    image: onlyoffice/documentserver:latest
+    container_name: docman-onlyoffice
+    ports:
+      - "8080:80"
+    environment:
+      # Local Docker + host Flask: keep JWT off to avoid secret mismatch.
+      # Re-enable later with matching ONLYOFFICE_JWT_SECRET on both sides.
+      JWT_ENABLED: "false"
+    volumes:
+      - onlyoffice_data:/var/www/onlyoffice/Data
+      - ./docker/onlyoffice/patch-private-ip.py:/patch-private-ip.py:ro
+    entrypoint:
+      - bash
+      - -c
+      - |
+        (
+          for i in $$(seq 1 90); do
+            if [ -f /etc/onlyoffice/documentserver/local.json ] \
+              && supervisorctl status ds:docservice 2>/dev/null | grep -q RUNNING; then
+              python3 /patch-private-ip.py || true
+              supervisorctl restart ds:docservice ds:converter || true
+              break
+            fi
+            sleep 2
+          done
+        ) &
+        exec /app/ds/run-document-server.sh
+    restart: unless-stopped
+
+volumes:
+  onlyoffice_data:
