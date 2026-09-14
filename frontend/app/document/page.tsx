@@ -421,7 +421,7 @@ function DocumentCard({
               if (!canEdit) e.preventDefault();
             }}
           >
-            Edit Dokumen
+            Buka/Edit Dokumen
           </Link>
           <a
             href={documentFileUrl(doc.id)}
