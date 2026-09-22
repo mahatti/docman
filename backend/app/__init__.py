@@ -6,6 +6,7 @@ from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 
 from app.config import Config
 
@@ -85,24 +86,33 @@ def create_app():
     def not_found(_error):
         return jsonify({"status": "error", "message": "Endpoint tidak ditemukan"}), 404
 
-    with app.app_context():
-        from app.models import Activity, ChatMessage, Document, DocumentChunk, Module, Procedure  # noqa: F401
-        from app.schema import ensure_pgvector_column, ensure_schema
-        from app.service.document_service import default_module, repair_stored_page_numbers, repair_table_catalogs
+    try:
+        with app.app_context():
+            from app.models import Activity, ChatMessage, Document, DocumentChunk, Module, Procedure  # noqa: F401
+            from app.schema import ensure_pgvector_column, ensure_schema
+            from app.service.document_service import default_module, repair_stored_page_numbers, repair_table_catalogs
 
-        ensure_schema(db)
-        db.create_all()
-        ensure_pgvector_column(db)
-        default_module()
-        db.session.commit()
-        try:
-            repair_stored_page_numbers()
-            repair_table_catalogs()
+            ensure_schema(db)
+            db.create_all()
+            ensure_pgvector_column(db)
+            default_module()
             db.session.commit()
-        except Exception:
-            db.session.rollback()
-        finally:
-            db.session.remove()
+            try:
+                repair_stored_page_numbers()
+                repair_table_catalogs()
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+            finally:
+                db.session.remove()
+    except Exception as exc:
+        if isinstance(exc, OperationalError):
+            raise RuntimeError(
+                "Gagal konek ke Supabase Postgres. Pastikan project Active (bukan Paused), "
+                "DATABASE_URL memakai Session pooler (user postgres.<project-ref>, host "
+                "pooler.supabase.com:5432) tanpa kurung siku di password, lalu restart backend."
+            ) from exc
+        raise
 
     def _dispose_engine():
         try:

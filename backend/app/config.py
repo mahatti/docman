@@ -10,13 +10,29 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BASE_DIR / ".env")
 
 
+def _append_query(uri: str, key: str, value: str) -> str:
+    if not uri or f"{key}=" in uri:
+        return uri
+    return uri + ("&" if "?" in uri else "?") + f"{key}={value}"
+
+
 def _engine_options() -> dict:
     uri = os.getenv("DATABASE_URL", "")
     # Supabase session-mode pooler caps clients at pool_size (often 15).
     # A local QueuePool on top of that — plus Flask reloader processes —
     # exhausts the cap. Let the pooler own pooling and close connections
     # after each checkout.
-    connect_args = {"connect_timeout": 15}
+    # gssencmode=disable: domain-joined Windows (Kerberos) sends a GSSENCRequest
+    # that Supavisor drops as "server closed the connection unexpectedly".
+    connect_args = {
+        "connect_timeout": 15,
+        "sslmode": "require",
+        "gssencmode": "disable",
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5,
+    }
     if "pooler.supabase.com" in uri:
         return {
             "poolclass": NullPool,
@@ -45,8 +61,8 @@ def _database_uri() -> str:
             password = password[1:-1]
         uri = f"{scheme}{user}:{quote_plus(password)}@{host}{rest}"
 
-    if uri and "sslmode=" not in uri:
-        uri += ("&" if "?" in uri else "?") + "sslmode=require"
+    uri = _append_query(uri, "sslmode", "require")
+    uri = _append_query(uri, "gssencmode", "disable")
     return uri
 
 
